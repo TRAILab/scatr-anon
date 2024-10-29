@@ -1,7 +1,7 @@
 WORK_DIR=${PWD}
 PROJECT=sparse4d-lidar
 DOCKER_IMAGE=bcheong/${PROJECT}:torch1
-DOCKER_FILE=Docker/Dockerfile
+DOCKER_FILE=Docker/Dockerfile-torch1
 DATA_ROOT_LOCAL_MINI=/media/brian/Data/nuscenes
 DATA_ROOT_LOCAL=/media/brian/Data/nuscenes
 WORK_DIR_LOCAL=/media/brian/Data/job_artifacts/Sparse4D-Lidar/work_dirs

@@ -61,7 +61,7 @@ log_level = "INFO"
 work_dir = "work_dirs/sparse4dv3_temporal_r50_1x8_bs6_256x704"
 
 total_batch_size = 48
-num_gpus = 1
+num_gpus = 8
 batch_size = total_batch_size // num_gpus
 num_iters_per_epoch = int(28130 // (num_gpus * batch_size))
 num_epochs = 100
@@ -296,7 +296,7 @@ model = dict(
 dataset_type = "NuScenes3DDetTrackDataset"
 data_root = "data/nuscenes/"
 # anno_root = "data/nuscenes_cam/"
-anno_root = "data/nuscenes/nusc_sparse4d_pkls/"
+anno_root = "data/nuscenes/nuscenes_sparse4d_pkls/"
 file_client_args = dict(backend="disk")
 
 img_norm_cfg = dict(
