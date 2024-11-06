@@ -6,3 +6,5 @@ build/
 *.egg-info/
 *.so
 ckpt
+data/
+work_dirs/

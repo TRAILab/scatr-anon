@@ -1,18 +1,13 @@
 # Copyright (c) Horizon Robotics. All rights reserved.
 from inspect import signature
+from typing import Dict, List, Optional
 
 import torch
+from mmdet3d.models.detectors.mvx_two_stage import MVXTwoStageDetector
+from mmdet3d.registry import MODELS
+from mmdet3d.structures import Det3DDataSample
+from torch import Tensor
 
-from mmcv.runner import force_fp32, auto_fp16
-from mmcv.utils import build_from_cfg
-from mmcv.cnn.bricks.registry import PLUGIN_LAYERS
-from mmdet.models import (
-    DETECTORS,
-    BaseDetector,
-    build_backbone,
-    build_head,
-    build_neck,
-)
 from .grid_mask import GridMask
 
 try:
@@ -24,8 +19,8 @@ except:
 __all__ = ["Sparse4D"]
 
 
-@DETECTORS.register_module()
-class Sparse4D(BaseDetector):
+@MODELS.register_module()
+class Sparse4D(MVXTwoStageDetector):
     def __init__(
         self,
         img_backbone,
@@ -41,17 +36,18 @@ class Sparse4D(BaseDetector):
     ):
         super(Sparse4D, self).__init__(init_cfg=init_cfg)
         if pretrained is not None:
+            raise NotImplementedError("not pretrained is not supported.")
             backbone.pretrained = pretrained
-        self.img_backbone = build_backbone(img_backbone)
+        self.img_backbone = MODELS.build(img_backbone)
         if img_neck is not None:
-            self.img_neck = build_neck(img_neck)
-        self.head = build_head(head)
+            self.img_neck = MODELS.build(img_neck)
+        self.head = MODELS.build(head)
         self.use_grid_mask = use_grid_mask
         if use_deformable_func:
             assert DAF_VALID, "deformable_aggregation needs to be set up."
         self.use_deformable_func = use_deformable_func
         if depth_branch is not None:
-            self.depth_branch = build_from_cfg(depth_branch, PLUGIN_LAYERS)
+            self.depth_branch = MODELS.build(depth_branch)
         else:
             self.depth_branch = None
         if use_grid_mask:
@@ -59,7 +55,6 @@ class Sparse4D(BaseDetector):
                 True, True, rotate=1, offset=False, ratio=0.5, mode=1, prob=0.7
             )
 
-    @auto_fp16(apply_to=("img",), out_fp32=True)
     def extract_feat(self, img, return_depth=False, metas=None):
         bs = img.shape[0]
         if img.dim() == 5:  # multi-view
@@ -89,13 +84,6 @@ class Sparse4D(BaseDetector):
             return feature_maps, depths
         return feature_maps
 
-    @force_fp32(apply_to=("img",))
-    def forward(self, img, **data):
-        if self.training:
-            return self.forward_train(img, **data)
-        else:
-            return self.forward_test(img, **data)
-
     def forward_train(self, img, **data):
         feature_maps, depths = self.extract_feat(img, True, data)
         model_outs = self.head(feature_maps, data)
@@ -106,23 +94,32 @@ class Sparse4D(BaseDetector):
             )
         return output
 
-    def forward_test(self, img, **data):
-        if isinstance(img, list):
-            return self.aug_test(img, **data)
-        else:
-            return self.simple_test(img, **data)
-
-    def simple_test(self, img, **data):
+    def predict(self, batch_inputs_dict: Dict[str, Optional[Tensor]],
+                batch_data_samples: List[Det3DDataSample],
+                **kwargs) -> List[Det3DDataSample]:
+        img = batch_inputs_dict["img"]
         feature_maps = self.extract_feat(img)
-
-        model_outs = self.head(feature_maps, data)
+        # timestamp needs to be double to avoid quantization errors
+        timestamp = torch.tensor([bs.metainfo["timestamp"]
+                                 for bs in batch_data_samples], dtype=torch.float64)
+        model_outs = self.head(
+            feature_maps,
+            timestamp=timestamp,
+            projection_mat=batch_inputs_dict["lidar2img"].to(torch.float32),
+            # flip (H, W) to (W, H)
+            image_wh=batch_inputs_dict["img_shape"][..., [1, 0]],
+            batch_data_samples=batch_data_samples,
+        )
         results = self.head.post_process(model_outs)
-        output = [{"img_bbox": result} for result in results]
+        output = self.add_pred_to_datasample(
+            batch_data_samples, data_instances_3d=results
+        )
+        output = [op for op in output if not op.metainfo["padding"]]
         return output
 
-    def aug_test(self, img, **data):
-        # fake test time augmentation
-        for key in data.keys():
-            if isinstance(data[key], list):
-                data[key] = data[key][0]
-        return self.simple_test(img[0], **data)
+    # def aug_test(self, img, **data):
+    #     # fake test time augmentation
+    #     for key in data.keys():
+    #         if isinstance(data[key], list):
+    #             data[key] = data[key][0]
+    #     return self.simple_test(img[0], **data)

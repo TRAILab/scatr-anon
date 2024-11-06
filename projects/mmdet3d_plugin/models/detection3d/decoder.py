@@ -2,13 +2,14 @@
 from typing import Optional
 
 import torch
-
-from mmdet.core.bbox.builder import BBOX_CODERS
+from mmdet3d.registry import MODELS
+from mmdet3d.structures import LiDARInstance3DBoxes
+from mmengine.structures import InstanceData
 
 from projects.mmdet3d_plugin.core.box3d import *
 
 
-@BBOX_CODERS.register_module()
+@MODELS.register_module()
 class SparseBox3DDecoder(object):
     def __init__(
         self,
@@ -39,7 +40,7 @@ class SparseBox3DDecoder(object):
         cls_scores,
         box_preds,
         instance_id=None,
-        qulity=None,
+        quality=None,
         output_idx=-1,
     ):
         squeeze_cls = instance_id is not None
@@ -60,8 +61,8 @@ class SparseBox3DDecoder(object):
         if self.score_threshold is not None:
             mask = cls_scores >= self.score_threshold
 
-        if qulity is not None:
-            centerness = qulity[output_idx][..., CNS]
+        if quality is not None:
+            centerness = quality[output_idx][..., CNS]
             centerness = torch.gather(centerness, 1, indices // num_cls)
             cls_scores_origin = cls_scores.clone()
             cls_scores *= centerness.sigmoid()
@@ -83,24 +84,27 @@ class SparseBox3DDecoder(object):
                 category_ids = category_ids[mask[i]]
                 scores = scores[mask[i]]
                 box = box[mask[i]]
-            if qulity is not None:
+            if quality is not None:
                 scores_origin = cls_scores_origin[i]
                 if self.score_threshold is not None:
                     scores_origin = scores_origin[mask[i]]
 
             box = self.decode_box(box)
-            output.append(
-                {
-                    "boxes_3d": box.cpu(),
-                    "scores_3d": scores.cpu(),
-                    "labels_3d": category_ids.cpu(),
-                }
-            )
-            if qulity is not None:
-                output[-1]["cls_scores"] = scores_origin.cpu()
+            box = LiDARInstance3DBoxes(box, origin=(
+                0.5, 0.5, 0.5), box_dim=box.shape[-1])
+            output_dict = {
+                "bboxes_3d": box.cpu(),
+                "scores_3d": scores.cpu(),
+                "track_scores": scores.cpu(),
+                "labels_3d": category_ids.cpu(),
+            }
+            if quality is not None:
+                output_dict["cls_scores"] = scores_origin.cpu()
             if instance_id is not None:
                 ids = instance_id[i, indices[i]]
                 if self.score_threshold is not None:
                     ids = ids[mask[i]]
-                output[-1]["instance_ids"] = ids
+                output_dict["track_ids"] = ids
+
+            output.append(InstanceData(**output_dict))
         return output

@@ -11,6 +11,8 @@ from .augment import (
     PhotoMetricDistortionMultiViewImage,
 )
 from .loading import LoadMultiViewImageFromFiles, LoadPointsFromFile
+from .track_transform_3d import TrackSample
+from .formatting import Pack3DTrackInputs
 
 __all__ = [
     "InstanceNameFilter",
@@ -23,4 +25,6 @@ __all__ = [
     "NuScenesSparse4DAdaptor",
     "LoadMultiViewImageFromFiles",
     "LoadPointsFromFile",
+    "TrackSample",
+    "Pack3DTrackInputs",
 ]

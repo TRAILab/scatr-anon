@@ -1,31 +1,18 @@
 # Copyright (c) Horizon Robotics. All rights reserved.
-from typing import List, Optional, Tuple, Union
-import warnings
+from typing import List, Optional, Union
 
 import numpy as np
 import torch
 import torch.nn as nn
-
-from mmcv.cnn.bricks.registry import (
-    ATTENTION,
-    PLUGIN_LAYERS,
-    POSITIONAL_ENCODING,
-    FEEDFORWARD_NETWORK,
-    NORM_LAYERS,
-)
-from mmcv.runner import BaseModule, force_fp32
-from mmcv.utils import build_from_cfg
-from mmdet.core.bbox.builder import BBOX_SAMPLERS
-from mmdet.core.bbox.builder import BBOX_CODERS
-from mmdet.models import HEADS, LOSSES
-from mmdet.core import reduce_mean
-
-from .blocks import DeformableFeatureAggregation as DFG
+from mmdet3d.registry import MODELS
+from mmdet3d.structures import Det3DDataSample
+from mmdet.utils import reduce_mean
+from mmengine.model import BaseModule
 
 __all__ = ["Sparse4DHead"]
 
 
-@HEADS.register_module()
+@MODELS.register_module()
 class Sparse4DHead(BaseModule):
     def __init__(
         self,
@@ -83,28 +70,24 @@ class Sparse4DHead(BaseModule):
         self.operation_order = operation_order
 
         # =========== build modules ===========
-        def build(cfg, registry):
-            if cfg is None:
-                return None
-            return build_from_cfg(cfg, registry)
 
-        self.instance_bank = build(instance_bank, PLUGIN_LAYERS)
-        self.anchor_encoder = build(anchor_encoder, POSITIONAL_ENCODING)
-        self.sampler = build(sampler, BBOX_SAMPLERS)
-        self.decoder = build(decoder, BBOX_CODERS)
-        self.loss_cls = build(loss_cls, LOSSES)
-        self.loss_reg = build(loss_reg, LOSSES)
+        self.instance_bank = MODELS.build(instance_bank)
+        self.anchor_encoder = MODELS.build(anchor_encoder)
+        self.sampler = MODELS.build(sampler)
+        self.decoder = MODELS.build(decoder)
+        self.loss_cls = MODELS.build(loss_cls)
+        self.loss_reg = MODELS.build(loss_reg)
         self.op_config_map = {
-            "temp_gnn": [temp_graph_model, ATTENTION],
-            "gnn": [graph_model, ATTENTION],
-            "norm": [norm_layer, NORM_LAYERS],
-            "ffn": [ffn, FEEDFORWARD_NETWORK],
-            "deformable": [deformable_model, ATTENTION],
-            "refine": [refine_layer, PLUGIN_LAYERS],
+            "temp_gnn": [temp_graph_model],
+            "gnn": [graph_model],
+            "norm": [norm_layer],
+            "ffn": [ffn],
+            "deformable": [deformable_model],
+            "refine": [refine_layer],
         }
         self.layers = nn.ModuleList(
             [
-                build(*self.op_config_map.get(op, [None, None]))
+                MODELS.build(self.op_config_map.get(op, None)[0])
                 for op in self.operation_order
             ]
         )
@@ -163,8 +146,12 @@ class Sparse4DHead(BaseModule):
     def forward(
         self,
         feature_maps: Union[torch.Tensor, List],
-        metas: dict,
+        timestamp: torch.Tensor,
+        projection_mat: torch.Tensor,
+        image_wh: torch.Tensor,
+        batch_data_samples: List[Det3DDataSample],
     ):
+        batch_metas = [item.metainfo for item in batch_data_samples]
         if isinstance(feature_maps, torch.Tensor):
             feature_maps = [feature_maps]
         batch_size = feature_maps[0].shape[0]
@@ -175,6 +162,7 @@ class Sparse4DHead(BaseModule):
             and self.sampler.dn_metas["dn_anchor"].shape[0] != batch_size
         ):
             self.sampler.dn_metas = None
+
         (
             instance_feature,
             anchor,
@@ -182,7 +170,11 @@ class Sparse4DHead(BaseModule):
             temp_anchor,
             time_interval,
         ) = self.instance_bank.get(
-            batch_size, metas, dn_metas=self.sampler.dn_metas
+            batch_size,
+            timestamp,
+            batched_global2lidar=[np.linalg.inv(x["lidar2global"])
+                                  for x in batch_metas],
+            dn_metas=self.sampler.dn_metas
         )
 
         # ========= prepare for denosing training ============
@@ -193,16 +185,16 @@ class Sparse4DHead(BaseModule):
         dn_metas = None
         temp_dn_reg_target = None
         if self.training and hasattr(self.sampler, "get_dn_anchors"):
-            if "instance_id" in metas["img_metas"][0]:
+            if "instance_id" in batch_metas[0]:
                 gt_instance_id = [
                     torch.from_numpy(x["instance_id"]).cuda()
-                    for x in metas["img_metas"]
+                    for x in batch_metas
                 ]
             else:
                 gt_instance_id = None
             dn_metas = self.sampler.get_dn_anchors(
-                metas[self.gt_cls_key],
-                metas[self.gt_reg_key],
+                [ds.gt_instances_3d.labels_3d for ds in batch_data_samples],
+                [ds.gt_instances_3d.bboxes_3d for ds in batch_data_samples],
                 gt_instance_id,
             )
         if dn_metas is not None:
@@ -285,7 +277,8 @@ class Sparse4DHead(BaseModule):
                     anchor,
                     anchor_embed,
                     feature_maps,
-                    metas,
+                    projection_mat,
+                    image_wh,
                 )
             elif op == "refine":
                 anchor, cls, qt = self.layers[i](
@@ -398,7 +391,12 @@ class Sparse4DHead(BaseModule):
 
         # cache current instances for temporal modeling
         self.instance_bank.cache(
-            instance_feature, anchor, cls, metas, feature_maps
+            instance_feature,
+            anchor,
+            cls,
+            timestamp,
+            [x["lidar2global"] for x in batch_metas],
+            feature_maps
         )
         if not self.training:
             instance_id = self.instance_bank.get_instance_id(
@@ -407,7 +405,6 @@ class Sparse4DHead(BaseModule):
             output["instance_id"] = instance_id
         return output
 
-    @force_fp32(apply_to=("model_outs"))
     def loss(self, model_outs, data, feature_maps=None):
         # ===================== prediction losses ======================
         cls_scores = model_outs["classification"]
@@ -541,7 +538,6 @@ class Sparse4DHead(BaseModule):
             num_dn_pos,
         )
 
-    @force_fp32(apply_to=("model_outs"))
     def post_process(self, model_outs, output_idx=-1):
         return self.decoder.decode(
             model_outs["classification"],

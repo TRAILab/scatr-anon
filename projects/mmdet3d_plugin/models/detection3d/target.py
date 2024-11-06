@@ -3,7 +3,7 @@ import numpy as np
 import torch.nn.functional as F
 from scipy.optimize import linear_sum_assignment
 
-from mmdet.core.bbox.builder import BBOX_SAMPLERS
+from mmdet3d.registry import MODELS
 
 from projects.mmdet3d_plugin.core.box3d import *
 from ..base_target import BaseTargetWithDenoising
@@ -12,7 +12,7 @@ from ..base_target import BaseTargetWithDenoising
 __all__ = ["SparseBox3DTarget"]
 
 
-@BBOX_SAMPLERS.register_module()
+@MODELS.register_module()
 class SparseBox3DTarget(BaseTargetWithDenoising):
     def __init__(
         self,

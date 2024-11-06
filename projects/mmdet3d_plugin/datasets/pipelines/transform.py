@@ -1,8 +1,7 @@
 import numpy as np
 import mmcv
-from mmcv.parallel import DataContainer as DC
-from mmdet.datasets.builder import PIPELINES
-from mmdet.datasets.pipelines import to_tensor
+from mmengine.structures import base_data_element as DC
+from mmdet3d.registry import TRANSFORMS as PIPELINES
 
 
 @PIPELINES.register_module()
@@ -85,16 +84,16 @@ class NuScenesSparse4DAdaptor(object):
                 input_dict["gt_bboxes_3d"][:, 6], offset=0.5, period=2 * np.pi
             )
             input_dict["gt_bboxes_3d"] = DC(
-                to_tensor(input_dict["gt_bboxes_3d"]).float()
-            )
+                (input_dict["gt_bboxes_3d"])
+            ).to_tensor().float()
         if "gt_labels_3d" in input_dict:
             input_dict["gt_labels_3d"] = DC(
-                to_tensor(input_dict["gt_labels_3d"]).long()
-            )
+                (input_dict["gt_labels_3d"])
+            ).to_tensor().long()
 
         imgs = [img.transpose(2, 0, 1) for img in input_dict["img"]]
         imgs = np.ascontiguousarray(np.stack(imgs, axis=0))
-        input_dict["img"] = DC(to_tensor(imgs), stack=True)
+        input_dict["img"] = DC(imgs).to_tensor()
         return input_dict
 
     def limit_period(

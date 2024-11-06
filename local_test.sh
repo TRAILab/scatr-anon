@@ -17,13 +17,9 @@ then
     bash ./tools/dist_test.sh \
         ${config} \
         ${checkpoint} \
-        ${gpu_num} \
-        --eval bbox \
-        $@
+        ${gpu_num}
 else
     python ./tools/test.py \
         ${config} \
-        ${checkpoint} \
-        --eval bbox \
-        $@
+        ${checkpoint}
 fi

@@ -4,8 +4,7 @@ from torch import nn
 import torch.nn.functional as F
 import numpy as np
 
-from mmcv.utils import build_from_cfg
-from mmcv.cnn.bricks.registry import PLUGIN_LAYERS
+from mmdet3d.registry import MODELS
 
 __all__ = ["InstanceBank"]
 
@@ -22,7 +21,7 @@ def topk(confidence, k, *inputs):
     return confidence, outputs
 
 
-@PLUGIN_LAYERS.register_module()
+@MODELS.register_module()
 class InstanceBank(nn.Module):
     def __init__(
         self,
@@ -45,7 +44,7 @@ class InstanceBank(nn.Module):
         self.max_time_interval = max_time_interval
 
         if anchor_handler is not None:
-            anchor_handler = build_from_cfg(anchor_handler, PLUGIN_LAYERS)
+            anchor_handler = MODELS.build(anchor_handler)
             assert hasattr(anchor_handler, "anchor_projection")
         self.anchor_handler = anchor_handler
         if isinstance(anchor, str):
@@ -73,14 +72,16 @@ class InstanceBank(nn.Module):
     def reset(self):
         self.cached_feature = None
         self.cached_anchor = None
-        self.metas = None
+        # self.metas = None
+        self.history_time = None
+        self.history_T_global = None
         self.mask = None
         self.confidence = None
         self.temp_confidence = None
         self.instance_id = None
         self.prev_id = 0
 
-    def get(self, batch_size, metas=None, dn_metas=None):
+    def get(self, batch_size, timestamp, batched_global2lidar, dn_metas=None):
         instance_feature = torch.tile(
             self.instance_feature[None], (batch_size, 1, 1)
         )
@@ -90,18 +91,18 @@ class InstanceBank(nn.Module):
             self.cached_anchor is not None
             and batch_size == self.cached_anchor.shape[0]
         ):
-            history_time = self.metas["timestamp"]
-            time_interval = metas["timestamp"] - history_time
-            time_interval = time_interval.to(dtype=instance_feature.dtype)
+            # history_time = self.metas["timestamp"]
+            history_time = self.history_time
+            time_interval = timestamp - history_time
+            time_interval = time_interval.to(dtype=instance_feature.dtype, device=instance_feature.device)
             self.mask = torch.abs(time_interval) <= self.max_time_interval
 
             if self.anchor_handler is not None:
                 T_temp2cur = self.cached_anchor.new_tensor(
                     np.stack(
                         [
-                            x["T_global_inv"]
-                            @ self.metas["img_metas"][i]["T_global"]
-                            for i, x in enumerate(metas["img_metas"])
+                            x @ self.history_T_global[i]
+                            for i, x in enumerate(batched_global2lidar)
                         ]
                     )
                 )
@@ -191,7 +192,8 @@ class InstanceBank(nn.Module):
         instance_feature,
         anchor,
         confidence,
-        metas=None,
+        timestamp,
+        batch_history_T_global,
         feature_maps=None,
     ):
         if self.num_temp_instances <= 0:
@@ -200,7 +202,9 @@ class InstanceBank(nn.Module):
         anchor = anchor.detach()
         confidence = confidence.detach()
 
-        self.metas = metas
+        # self.metas = metas
+        self.history_time = timestamp
+        self.history_T_global = batch_history_T_global
         confidence = confidence.max(dim=-1).values.sigmoid()
         if self.confidence is not None:
             confidence[:, : self.num_temp_instances] = torch.maximum(

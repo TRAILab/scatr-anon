@@ -1,27 +1,23 @@
-import random
+import copy
 import math
 import os
-from os import path as osp
-import cv2
 import tempfile
-import copy
+from os import path as osp
 
+import cv2
+import mmengine
 import numpy as np
-import torch
-from torch.utils.data import Dataset
 import pyquaternion
-from nuscenes.utils.data_classes import Box as NuScenesBox
-from nuscenes.eval.detection.config import config_factory as det_configs
+from mmdet3d.registry import DATASETS
+from mmengine.dataset import Compose
+from mmengine.fileio import load
+from mmengine.logging import print_log
 from nuscenes.eval.common.config import config_factory as track_configs
+from nuscenes.eval.detection.config import config_factory as det_configs
+from nuscenes.utils.data_classes import Box as NuScenesBox
+from torch.utils.data import Dataset
 
-import mmcv
-from mmcv.utils import print_log
-from mmdet.datasets import DATASETS
-from mmdet.datasets.pipelines import Compose
-from .utils import (
-    draw_lidar_bbox3d_on_img,
-    draw_lidar_bbox3d_on_bev,
-)
+from .utils import draw_lidar_bbox3d_on_bev, draw_lidar_bbox3d_on_img
 
 
 @DATASETS.register_module()
@@ -263,7 +259,7 @@ class NuScenes3DDetTrackDataset(Dataset):
         return cat_ids
 
     def load_annotations(self, ann_file):
-        data = mmcv.load(ann_file, file_format="pkl")
+        data = load(ann_file)
         data_infos = list(sorted(data["infos"], key=lambda e: e["timestamp"]))
         data_infos = data_infos[:: self.load_interval]
         self.metadata = data["metadata"]
@@ -367,7 +363,7 @@ class NuScenes3DDetTrackDataset(Dataset):
         mapped_class_names = self.CLASSES
 
         print("Start to convert detection format...")
-        for sample_id, det in enumerate(mmcv.track_iter_progress(results)):
+        for sample_id, det in enumerate(mmengine.track_iter_progress(results)):
             annos = []
             boxes = output_to_nusc_box(
                 det, threshold=self.tracking_threshold if tracking else None
@@ -440,10 +436,10 @@ class NuScenes3DDetTrackDataset(Dataset):
             "results": nusc_annos,
         }
 
-        mmcv.mkdir_or_exist(jsonfile_prefix)
+        mmengine.mkdir_or_exist(jsonfile_prefix)
         res_path = osp.join(jsonfile_prefix, "results_nusc.json")
         print("Results writes to", res_path)
-        mmcv.dump(nusc_submissions, res_path)
+        mmengine.dump(nusc_submissions, res_path)
         return res_path
 
     def _evaluate_single(
@@ -473,7 +469,7 @@ class NuScenes3DDetTrackDataset(Dataset):
             nusc_eval.main(render_curves=False)
 
             # record metrics
-            metrics = mmcv.load(osp.join(output_dir, "metrics_summary.json"))
+            metrics = load(osp.join(output_dir, "metrics_summary.json"))
             detail = dict()
             metric_prefix = f"{result_name}_NuScenes"
             for name in self.CLASSES:
@@ -508,7 +504,7 @@ class NuScenes3DDetTrackDataset(Dataset):
             metrics = nusc_eval.main()
 
             # record metrics
-            metrics = mmcv.load(osp.join(output_dir, "metrics_summary.json"))
+            metrics = load(osp.join(output_dir, "metrics_summary.json"))
             print(metrics)
             detail = dict()
             metric_prefix = f"{result_name}_NuScenes"

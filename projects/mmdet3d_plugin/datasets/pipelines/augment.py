@@ -1,9 +1,7 @@
-import torch
-
-import numpy as np
-from numpy import random
 import mmcv
-from mmdet.datasets.builder import PIPELINES
+import numpy as np
+from mmdet3d.registry import TRANSFORMS as PIPELINES
+from numpy import random
 from PIL import Image
 
 

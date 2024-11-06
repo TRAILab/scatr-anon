@@ -1,9 +1,9 @@
 import numpy as np
 import mmcv
-from mmdet.datasets.builder import PIPELINES
+from mmdet3d.registry import TRANSFORMS as PIPELINES
 
 
-@PIPELINES.register_module()
+# @PIPELINES.register_module()
 class LoadMultiViewImageFromFiles(object):
     """Load multi channel images from a list of separate channel files.
 
@@ -19,6 +19,7 @@ class LoadMultiViewImageFromFiles(object):
     def __init__(self, to_float32=False, color_type="unchanged"):
         self.to_float32 = to_float32
         self.color_type = color_type
+        breakpoint()
 
     def __call__(self, results):
         """Call function to load multi-view image from files.
@@ -70,7 +71,7 @@ class LoadMultiViewImageFromFiles(object):
         return repr_str
 
 
-@PIPELINES.register_module()
+# @PIPELINES.register_module()
 class LoadPointsFromFile(object):
     """Load Points From File.
 

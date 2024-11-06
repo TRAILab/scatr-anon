@@ -53,14 +53,19 @@ TID 1.37
 LGD 1.89
 """
 
+from mmengine import read_base
+with read_base():
+    from ._base_.default_runtime import *
+
 # ================ base config ===================
 plugin = True
 plugin_dir = "projects/mmdet3d_plugin/"
 dist_params = dict(backend="nccl")
 log_level = "INFO"
 work_dir = "work_dirs/sparse4dv3_temporal_r50_1x8_bs6_256x704"
+backend_args = None
 
-total_batch_size = 48
+total_batch_size = 8
 num_gpus = 1
 batch_size = total_batch_size // num_gpus
 num_iters_per_epoch = int(28130 // (num_gpus * batch_size))
@@ -71,7 +76,7 @@ checkpoint_config = dict(
     interval=num_iters_per_epoch * checkpoint_epoch_interval
 )
 log_config = dict(
-    interval=51,
+    interval=1,
     hooks=[
         dict(type="TextLoggerHook", by_epoch=False),
         dict(type="TensorboardLoggerHook"),
@@ -119,7 +124,7 @@ model = dict(
     use_grid_mask=True,
     use_deformable_func=use_deformable_func,
     img_backbone=dict(
-        type="ResNet",
+        type="mmdet.ResNet",
         depth=50,
         num_stages=4,
         frozen_stages=-1,
@@ -131,7 +136,7 @@ model = dict(
         pretrained="ckpts/resnet50-19c8e357.pth",
     ),
     img_neck=dict(
-        type="FPN",
+        type="mmdet.FPN",
         num_outs=num_levels,
         start_level=0,
         out_channels=embed_dims,
@@ -274,7 +279,7 @@ model = dict(
             },
         ),
         loss_cls=dict(
-            type="FocalLoss",
+            type="mmdet.FocalLoss",
             use_sigmoid=True,
             gamma=2.0,
             alpha=0.25,
@@ -282,9 +287,10 @@ model = dict(
         ),
         loss_reg=dict(
             type="SparseBox3DLoss",
-            loss_box=dict(type="L1Loss", loss_weight=0.25),
-            loss_centerness=dict(type="CrossEntropyLoss", use_sigmoid=True),
-            loss_yawness=dict(type="GaussianFocalLoss"),
+            loss_box=dict(type="mmdet.L1Loss", loss_weight=0.25),
+            loss_centerness=dict(
+                type="mmdet.CrossEntropyLoss", use_sigmoid=True),
+            loss_yawness=dict(type="mmdet.GaussianFocalLoss"),
             cls_allow_reverse=[class_names.index("barrier")],
         ),
         decoder=dict(type="SparseBox3DDecoder"),
@@ -293,10 +299,11 @@ model = dict(
 )
 
 # ================== data ========================
-dataset_type = "NuScenes3DDetTrackDataset"
+dataset_type = "NuScenesTrackingDataset"
 data_root = "data/nuscenes/"
-# anno_root = "data/nuscenes_cam/"
-anno_root = "data/nuscenes/nusc_sparse4d_pkls/"
+anno_root = ""
+train_pkl_path = anno_root + "nuscenes_tracking_v2_infos_train.pkl"
+val_pkl_path = anno_root + "nuscenes_tracking_v2_infos_val.pkl"
 file_client_args = dict(backend="disk")
 
 img_norm_cfg = dict(
@@ -324,9 +331,9 @@ train_pipeline = [
         class_dist_thred=[55] * len(class_names),
     ),
     dict(type="InstanceNameFilter", classes=class_names),
-    dict(type="NuScenesSparse4DAdaptor"),
+    # dict(type="NuScenesSparse4DAdaptor"),
     dict(
-        type="Collect",
+        type="Pack3DTrackInputs",
         keys=[
             "img",
             "timestamp",
@@ -344,16 +351,16 @@ test_pipeline = [
     dict(type="LoadMultiViewImageFromFiles", to_float32=True),
     dict(type="ResizeCropFlipImage"),
     dict(type="NormalizeMultiviewImage", **img_norm_cfg),
-    dict(type="NuScenesSparse4DAdaptor"),
+    # dict(type="NuScenesSparse4DAdaptor"),
     dict(
-        type="Collect",
+        type="Pack3DTrackInputs",
         keys=[
             "img",
-            "timestamp",
-            "projection_mat",
-            "image_wh",
+            "lidar2img",
+            "img_shape",
         ],
-        meta_keys=["T_global", "T_global_inv", "timestamp"],
+        meta_keys=["lidar2global", "timestamp",
+                   "lidar2img", "img_shape", "sample_idx", "scene_token"],
     ),
 ]
 
@@ -364,13 +371,26 @@ input_modality = dict(
     use_map=False,
     use_external=False,
 )
+data_prefix = dict(
+    pts='samples/LIDAR_TOP',
+    CAM_FRONT='samples/CAM_FRONT',
+    CAM_FRONT_LEFT='samples/CAM_FRONT_LEFT',
+    CAM_FRONT_RIGHT='samples/CAM_FRONT_RIGHT',
+    CAM_BACK='samples/CAM_BACK',
+    CAM_BACK_RIGHT='samples/CAM_BACK_RIGHT',
+    CAM_BACK_LEFT='samples/CAM_BACK_LEFT',
+    sweeps='sweeps/LIDAR_TOP')
+
+metainfo = dict(classes=class_names, version='v1.0-trainval')
 
 data_basic_config = dict(
     type=dataset_type,
     data_root=data_root,
-    classes=class_names,
+    # classes=class_names,
     modality=input_modality,
-    version="v1.0-trainval",
+    data_prefix=data_prefix,
+    # version="v1.0-trainval",
+    metainfo=metainfo,
 )
 
 data_aug_conf = {
@@ -386,10 +406,10 @@ data_aug_conf = {
 
 data = dict(
     samples_per_gpu=batch_size,
-    workers_per_gpu=batch_size,
+    workers_per_gpu=16,
     train=dict(
         **data_basic_config,
-        ann_file=anno_root + "nuscenes_infos_train.pkl",
+        ann_file=train_pkl_path,
         pipeline=train_pipeline,
         test_mode=False,
         data_aug_conf=data_aug_conf,
@@ -399,7 +419,7 @@ data = dict(
     ),
     val=dict(
         **data_basic_config,
-        ann_file=anno_root + "nuscenes_infos_val.pkl",
+        ann_file=val_pkl_path,
         pipeline=test_pipeline,
         data_aug_conf=data_aug_conf,
         test_mode=True,
@@ -408,7 +428,7 @@ data = dict(
     ),
     test=dict(
         **data_basic_config,
-        ann_file=anno_root + "nuscenes_infos_val.pkl",
+        ann_file=val_pkl_path,
         pipeline=test_pipeline,
         data_aug_conf=data_aug_conf,
         test_mode=True,
@@ -416,6 +436,36 @@ data = dict(
         tracking_threshold=tracking_threshold,
     ),
 )
+
+val_dataloader = dict(
+    batch_size=batch_size,
+    num_workers=16,
+    persistent_workers=True,
+    drop_last=False,
+    sampler=dict(type='DefaultSampler'),
+    batch_sampler=dict(type='TrackSampler3D', shuffle=False, clip_len=-1),
+    collate_fn=dict(type='default_collate'),
+    dataset=dict(
+        **data_basic_config,
+        ann_file=val_pkl_path,
+        pipeline=test_pipeline,
+        data_aug_conf=data_aug_conf,
+        test_mode=True,
+        # tracking=tracking_test,
+        # tracking_threshold=tracking_threshold
+    )
+)
+test_dataloader = val_dataloader
+
+val_evaluator = dict(
+    type='NuScenesTrackingMetric',
+    data_root=data_root,
+    ann_file=data_root+val_pkl_path,
+    metric='bbox',
+    jsonfile_prefix='work_dirs/nuscenes_results/tracking',
+    backend_args=backend_args)
+
+test_evaluator = val_evaluator
 
 # ================== training ========================
 optimizer = dict(
@@ -440,12 +490,17 @@ runner = dict(
     type="IterBasedRunner",
     max_iters=num_iters_per_epoch * num_epochs,
 )
+# runtime settings
+# train_cfg = dict(by_epoch=True, max_epochs=20, val_interval=20)
+val_cfg = dict()
+test_cfg = dict()
+
 
 # ================== eval ========================
 vis_pipeline = [
     dict(type="LoadMultiViewImageFromFiles", to_float32=True),
     dict(
-        type="Collect",
+        type="Pack3DDetInputs",
         keys=["img"],
         meta_keys=["timestamp", "lidar2img"],
     ),
@@ -455,3 +510,5 @@ evaluation = dict(
     pipeline=vis_pipeline,
     # out_dir="./vis",  # for visualization
 )
+custom_imports = dict(
+    imports=["projects.mmdet3d_plugin.models.sparse4d"], allow_failed_imports=False)
