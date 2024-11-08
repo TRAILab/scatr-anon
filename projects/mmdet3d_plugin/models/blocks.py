@@ -3,7 +3,7 @@ from typing import List, Optional
 
 import torch
 import torch.nn as nn
-from torch.cuda.amp.autocast_mode import autocast
+from torch.amp.autocast_mode import autocast
 
 from mmcv.cnn import Linear, build_activation_layer, build_norm_layer
 from mmengine.model import Sequential, BaseModule, xavier_init, constant_init
@@ -304,7 +304,7 @@ class DenseDepthNet(BaseModule):
             gt = gt[fg_mask]
             pred = pred[fg_mask]
             pred = torch.clip(pred, 0.0, self.max_depth)
-            with autocast(enabled=False):
+            with autocast('cuda', enabled=False):
                 error = torch.abs(pred - gt).sum()
                 _loss = (
                     error

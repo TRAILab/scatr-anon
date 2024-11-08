@@ -498,6 +498,13 @@ default_hooks = dict(
                     interval=num_iters_per_epoch * checkpoint_epoch_interval),
     )
 
+vis_backends = [
+    dict(type="LocalVisBackend"),
+    dict(type="TensorboardVisBackend"),
+]
+visualizer = dict(
+    type="Det3DLocalVisualizer", vis_backends=vis_backends, name="visualizer"
+)
 
 # ================== eval ========================
 # vis_pipeline = [
