@@ -8,3 +8,4 @@ build/
 ckpt
 data/
 work_dirs/
+.vscode/

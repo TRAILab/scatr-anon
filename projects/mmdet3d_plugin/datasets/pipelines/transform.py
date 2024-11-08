@@ -13,7 +13,7 @@ class MultiScaleDepthMapGenerator(object):
         self.max_depth = max_depth
 
     def __call__(self, input_dict):
-        points = input_dict["points"][..., :3, None]
+        points = input_dict["points"].numpy()[..., :3, None]
         gt_depth = []
         for i, lidar2img in enumerate(input_dict["lidar2img"]):
             H, W = input_dict["img_shape"][i][:2]
@@ -23,8 +23,8 @@ class MultiScaleDepthMapGenerator(object):
                 + lidar2img[:3, 3]
             )
             pts_2d[:, :2] /= pts_2d[:, 2:3]
-            U = np.round(pts_2d[:, 0]).astype(np.int32)
-            V = np.round(pts_2d[:, 1]).astype(np.int32)
+            U = np.round(pts_2d[:, 0]) # .astype(np.int32)
+            V = np.round(pts_2d[:, 1]) # .astype(np.int32)
             depths = pts_2d[:, 2]
             mask = np.logical_and.reduce(
                 [
@@ -156,7 +156,7 @@ class CircleObjectRangeFilter(object):
         gt_bboxes_3d = input_dict["gt_bboxes_3d"]
         gt_labels_3d = input_dict["gt_labels_3d"]
         dist = np.sqrt(
-            np.sum(gt_bboxes_3d[:, :2] ** 2, axis=-1)
+            np.sum(gt_bboxes_3d.numpy()[:, :2] ** 2, axis=-1)
         )
         mask = np.array([False] * len(dist))
         for label_idx, dist_thred in enumerate(self.class_dist_thred):

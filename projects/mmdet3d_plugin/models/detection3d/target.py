@@ -1,13 +1,15 @@
-import torch
+from typing import List
+
 import numpy as np
+import torch
 import torch.nn.functional as F
+from mmdet3d.registry import MODELS
+from mmdet3d.structures import LiDARInstance3DBoxes
 from scipy.optimize import linear_sum_assignment
 
-from mmdet3d.registry import MODELS
-
 from projects.mmdet3d_plugin.core.box3d import *
-from ..base_target import BaseTargetWithDenoising
 
+from ..base_target import BaseTargetWithDenoising
 
 __all__ = ["SparseBox3DTarget"]
 
@@ -45,16 +47,16 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
         self.max_dn_gt = max_dn_gt
         self.add_neg_dn = add_neg_dn
 
-    def encode_reg_target(self, box_target, device=None):
+    def encode_reg_target(self, box_target: List[LiDARInstance3DBoxes], device=None):
         outputs = []
         for box in box_target:
             output = torch.cat(
                 [
-                    box[..., [X, Y, Z]],
-                    box[..., [W, L, H]].log(),
-                    torch.sin(box[..., YAW]).unsqueeze(-1),
-                    torch.cos(box[..., YAW]).unsqueeze(-1),
-                    box[..., YAW + 1 :],
+                    box.gravity_center,
+                    box.dims.log(),
+                    torch.sin(box.yaw).unsqueeze(-1),
+                    torch.cos(box.yaw).unsqueeze(-1),
+                    box.tensor[:, YAW+1:], # velocity vector
                 ],
                 dim=-1,
             )
@@ -160,17 +162,18 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
                 cost.append(None)
         return cost
 
-    def get_dn_anchors(self, cls_target, box_target, gt_instance_id=None):
+    def get_dn_anchors(self, cls_target, box_target, gt_instance_inds=None):
         if self.num_dn_groups <= 0:
             return None
         if self.num_temp_dn_groups <= 0:
-            gt_instance_id = None
+            gt_instance_inds = None
 
         if self.max_dn_gt > 0:
             cls_target = [x[: self.max_dn_gt] for x in cls_target]
             box_target = [x[: self.max_dn_gt] for x in box_target]
-            if gt_instance_id is not None:
-                gt_instance_id = [x[: self.max_dn_gt] for x in gt_instance_id]
+            if gt_instance_inds is not None:
+                gt_instance_inds = [x[: self.max_dn_gt]
+                                    for x in gt_instance_inds]
 
         max_dn_gt = max([len(x) for x in cls_target])
         if max_dn_gt == 0:
@@ -188,11 +191,11 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
         box_target = torch.where(
             cls_target[..., None] == -1, box_target.new_tensor(0), box_target
         )
-        if gt_instance_id is not None:
-            gt_instance_id = torch.stack(
+        if gt_instance_inds is not None:
+            gt_instance_inds = torch.stack(
                 [
                     F.pad(x, (0, max_dn_gt - x.shape[0]), value=-1)
-                    for x in gt_instance_id
+                    for x in gt_instance_inds
                 ]
             )
 
@@ -200,8 +203,8 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
         if self.num_dn_groups > 1:
             cls_target = cls_target.tile(self.num_dn_groups, 1)
             box_target = box_target.tile(self.num_dn_groups, 1, 1)
-            if gt_instance_id is not None:
-                gt_instance_id = gt_instance_id.tile(self.num_dn_groups, 1)
+            if gt_instance_inds is not None:
+                gt_instance_inds = gt_instance_inds.tile(self.num_dn_groups, 1)
 
         noise = torch.rand_like(box_target) * 2 - 1
         noise *= box_target.new_tensor(self.dn_noise_scale)
@@ -223,11 +226,11 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
         )
         dn_box_target = torch.zeros_like(dn_anchor)
         dn_cls_target = -torch.ones_like(cls_target) * 3
-        if gt_instance_id is not None:
-            dn_id_target = -torch.ones_like(gt_instance_id)
+        if gt_instance_inds is not None:
+            dn_id_target = -torch.ones_like(gt_instance_inds)
         if self.add_neg_dn:
             dn_cls_target = torch.cat([dn_cls_target, dn_cls_target], dim=1)
-            if gt_instance_id is not None:
+            if gt_instance_inds is not None:
                 dn_id_target = torch.cat([dn_id_target, dn_id_target], dim=1)
 
         for i in range(dn_anchor.shape[0]):
@@ -237,8 +240,8 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
             gt_idx = dn_anchor.new_tensor(gt_idx, dtype=torch.int64)
             dn_box_target[i, anchor_idx] = box_target[i, gt_idx]
             dn_cls_target[i, anchor_idx] = cls_target[i, gt_idx]
-            if gt_instance_id is not None:
-                dn_id_target[i, anchor_idx] = gt_instance_id[i, gt_idx]
+            if gt_instance_inds is not None:
+                dn_id_target[i, anchor_idx] = gt_instance_inds[i, gt_idx]
         dn_anchor = (
             dn_anchor.reshape(self.num_dn_groups, bs, num_gt, state_dims)
             .permute(1, 0, 2, 3)
@@ -254,7 +257,7 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
             .permute(1, 0, 2)
             .flatten(1)
         )
-        if gt_instance_id is not None:
+        if gt_instance_inds is not None:
             dn_id_target = (
                 dn_id_target.reshape(self.num_dn_groups, bs, num_gt)
                 .permute(1, 0, 2)
@@ -334,7 +337,7 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
         if dn_id_target is not None:
             dn_id = dn_id_target.reshape(bs, num_dn_groups, num_dn)
 
-        # update temp_dn_metas by instance_id
+        # update temp_dn_metas by instance_inds
         temp_dn_feat = self.dn_metas["dn_instance_feature"]
         _, num_temp_dn_groups, num_temp_dn = temp_dn_feat.shape[:3]
         temp_dn_id = self.dn_metas["dn_id_target"]

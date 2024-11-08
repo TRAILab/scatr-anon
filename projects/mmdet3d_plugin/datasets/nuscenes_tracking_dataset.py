@@ -26,6 +26,7 @@ class NuScenesTrackingDataset(NuScenesDataset):
                  forecasting: bool = False,
                  seq_split_num: int = 2,
                  data_aug_conf: dict = {},
+                 verbose:bool=False,
                  **kwargs,
                  ):
         self.forecasting = forecasting
@@ -38,20 +39,15 @@ class NuScenesTrackingDataset(NuScenesDataset):
         assert self.seq_split_num >= 1
         self.data_aug_conf = data_aug_conf
         super().__init__(*args, **kwargs)
-        # resize params
-        H, W = self.data_aug_conf.pop("H"), self.data_aug_conf.pop("W")
-        fH, fW = self.data_aug_conf.pop("final_dim")
-        self.resize = max(fH/H, fW/W)
+
+        # resize params, using width, height convention
+        W, H = self.data_aug_conf.pop("W"), self.data_aug_conf.pop("H")
+        self.ori_dim = (W, H)
+        fW, fH = self.data_aug_conf.pop("final_dim")
+        self.final_dim = (fW, fH)
+        self.resize = max(fW/W, fH/H)
         self.resize_dims = (int(W * self.resize), int(H * self.resize))
-        newW, newH = self.resize_dims
-        crop_h = (newH- fH)
-        crop_w = int(max(0, newW - fW) / 2)
-        self.crop = (crop_w, crop_h, crop_w + fW, crop_h + fH)
-        # check resize_dims matches with final_dim
-        if self.resize_dims != (fW, fH):
-            print_log(
-                f"resize_dims {self.resize_dims} does not match final_dim {fW, fH}"
-            )
+        self.bot_pct_lim = self.data_aug_conf.pop("bot_pct_lim") # set to (0,0) by Sparse4D, doesn't matter?
 
         if self.test_mode and self.data_aug_conf != {}:
             print_log(
@@ -61,40 +57,78 @@ class NuScenesTrackingDataset(NuScenesDataset):
                 level=30,
             )
             self.data_aug_conf = {}
+        self.verbose = verbose
 
     def get_augmentation(self, clip_inds: List[int]):
         """
         Imported from Sparse4Dv3
         """
         aug_config = {}
+        # Img Augs
         # Resize
-        aug_config["resize"] = self.resize
-        aug_config["crop"] = self.crop
-        # BEVFusionRandomFlip3D
-        aug_config["flip_horizontal_3d"] = self.data_aug_conf.get(
-            "random_flip_3d_horiz", False) and np.random.choice([0, 1])
-        aug_config["flip_vertical_3d"] = self.data_aug_conf.get(
-            "random_flip_3d_vert", False) and np.random.choice([0, 1])
-        # BEVFusionGlobalRotScaleTrans
-        aug_config["rotation_3d"] = np.random.uniform(
-            *self.data_aug_conf.get("rotation_3d_range", [0, 0]))
-        aug_config["translation_3d"] = np.random.normal(
-            *self.data_aug_conf.get("translation_3d_range", [0, 0]), size=3).T
-        aug_config["scale_3d"] = np.random.uniform(
-            *self.data_aug_conf.get("scale_3d_range", [1, 1]))
+        if not self.test_mode: # training, random resize
+            resize = np.random.uniform(*self.data_aug_conf["resize_lim"])
+        else:  # fixed resize
+            resize = self.resize
+        aug_config["resize"] = resize
+        W, H = self.ori_dim
+        newW, newH = (int(W*resize), int(H*resize))
+        aug_config["resize_dims"] = (newW, newH)
+        # crop
+        fW, fH = self.final_dim
+        if not self.test_mode: # training, random crop
+            crop_h = (
+                int(
+                    (1 - np.random.uniform(*self.bot_pct_lim))
+                    * newH
+                )
+                - fH
+            )
+            crop_w = int(np.random.uniform(0, max(0, newW - fW)))
+        else:
+            crop_h = (
+                int((1 - np.mean(self.bot_pct_lim)) * newH)
+                - fH
+            )
+            crop_w = int(max(0, newW - fW) / 2)
+        aug_config["crop"] = (crop_w, crop_h, crop_w+fW, crop_h+fH)
+        # Flip
+        aug_config["flip"] = np.random.choice([True, False]) and self.data_aug_conf.get(
+            "rand_flip", False)
+        # Rotate
+        aug_config["rotate"] = np.random.uniform(
+            *self.data_aug_conf.get("rot_lim", (0, 0)))
+        # Rotate 3D
+        aug_config["rotate_3d"] = np.random.uniform(
+            *self.data_aug_conf.get("rot3d_range", (0, 0)))
+        # # (TODO) LiDAR Augs
+        # # BEVFusionRandomFlip3D
+        # aug_config["flip_horizontal_3d"] = self.data_aug_conf.get(
+        #     "random_flip_3d_horiz", False) and np.random.choice([0, 1])
+        # aug_config["flip_vertical_3d"] = self.data_aug_conf.get(
+        #     "random_flip_3d_vert", False) and np.random.choice([0, 1])
+        # # BEVFusionGlobalRotScaleTrans
+        # aug_config["rotation_3d"] = np.random.uniform(
+        #     *self.data_aug_conf.get("rotation_3d_range", [0, 0]))
+        # aug_config["translation_3d"] = np.random.normal(
+        #     *self.data_aug_conf.get("translation_3d_range", [0, 0]), size=3).T
+        # aug_config["scale_3d"] = np.random.uniform(
+        #     *self.data_aug_conf.get("scale_3d_range", [1, 1]))
+
+        # apply the same augmentation to all samples in the clip
         aug_config_list = [copy.deepcopy(aug_config)
                            for _ in range(len(clip_inds))]
-        # TrackDBSampler
-        if self.data_aug_conf.get("use_track_sample_3d", False):
-            assert any([isinstance(tf, TrackSample) for tf in self.pipeline.transforms]), \
-                "track sample 3d is set to true in the data_aug_conf of NuScenesTrackingDataset but the pipeline does not contain TrackSampler3D"
-            track_db_sampler = (tf.db_sampler for tf in self.pipeline.transforms if isinstance(
-                tf, TrackSample)).__next__()
-            scene_token = self.get_scene_token(clip_inds[0])
-            track_sample_dict_list = track_db_sampler.get_samples(
-                [self.cls_distr[i] for i in clip_inds], scene_token)
-            for track_sample_dict_i, aug_conf in zip(track_sample_dict_list, aug_config_list):
-                aug_conf["sampled_dict"] = track_sample_dict_i
+        # # TrackDBSampler
+        # if self.data_aug_conf.get("use_track_sample_3d", False):
+        #     assert any([isinstance(tf, TrackSample) for tf in self.pipeline.transforms]), \
+        #         "track sample 3d is set to true in the data_aug_conf of NuScenesTrackingDataset but the pipeline does not contain TrackSampler3D"
+        #     track_db_sampler = (tf.db_sampler for tf in self.pipeline.transforms if isinstance(
+        #         tf, TrackSample)).__next__()
+        #     scene_token = self.get_scene_token(clip_inds[0])
+        #     track_sample_dict_list = track_db_sampler.get_samples(
+        #         [self.cls_distr[i] for i in clip_inds], scene_token)
+        #     for track_sample_dict_i, aug_conf in zip(track_sample_dict_list, aug_config_list):
+        #         aug_conf["sampled_dict"] = track_sample_dict_i
         return aug_config_list
 
     def prepare_data(self, index) -> Union[dict, None]:
@@ -135,7 +169,8 @@ class NuScenesTrackingDataset(NuScenesDataset):
         # pre-pipline return None to random another in `__getitem__`
         if not self.test_mode and self.filter_empty_gt:
             if len(input_dict['ann_info']['gt_labels_3d']) == 0:
-                print("empty gt before pipeline at index: ", index)
+                if self.verbose:
+                    print_log(f"empty gt before pipeline at index: {index}")
                 return None
 
         input_dict["aug_config"] = aug_config
@@ -146,7 +181,10 @@ class NuScenesTrackingDataset(NuScenesDataset):
             # return None to random another in `__getitem__`
             if example is None or len(
                     example['data_samples'].gt_instances_3d.labels_3d) == 0:
-                print("empty gt after pipeline at index: ", index)
+                if self.verbose:
+                    print_log(f"empty gt after pipeline at index: {index}")
+                    print_log("num gt before pipeline: {}".format(
+                        len(input_dict['ann_info']['gt_labels_3d'])))
                 return None
 
         if self.show_ins_var:
@@ -235,4 +273,4 @@ class NuScenesTrackingDataset(NuScenesDataset):
         Returns:
             int: Random index from 0 to ``len(self)-1``
         """
-        raise Exception("This function should not be called")
+        raise Exception("This function should not be called during stream training")

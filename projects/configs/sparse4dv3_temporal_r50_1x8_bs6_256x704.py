@@ -53,9 +53,7 @@ TID 1.37
 LGD 1.89
 """
 
-from mmengine import read_base
-with read_base():
-    from ._base_.default_runtime import *
+_base_ = ['./_base_/default_runtime.py']
 
 # ================ base config ===================
 plugin = True
@@ -63,9 +61,8 @@ plugin_dir = "projects/mmdet3d_plugin/"
 dist_params = dict(backend="nccl")
 log_level = "INFO"
 work_dir = "work_dirs/sparse4dv3_temporal_r50_1x8_bs6_256x704"
-backend_args = None
 
-total_batch_size = 8
+total_batch_size = 6
 num_gpus = 1
 batch_size = total_batch_size // num_gpus
 num_iters_per_epoch = int(28130 // (num_gpus * batch_size))
@@ -133,7 +130,9 @@ model = dict(
         with_cp=True,
         out_indices=(0, 1, 2, 3),
         norm_cfg=dict(type="BN", requires_grad=True),
-        pretrained="ckpts/resnet50-19c8e357.pth",
+        init_cfg=(
+            dict(type="Pretrained", checkpoint="ckpts/resnet50-19c8e357.pth"),
+        )
     ),
     img_neck=dict(
         type="mmdet.FPN",
@@ -302,9 +301,9 @@ model = dict(
 dataset_type = "NuScenesTrackingDataset"
 data_root = "data/nuscenes/"
 anno_root = ""
-train_pkl_path = anno_root + "nuscenes_tracking_v2_infos_train.pkl"
-val_pkl_path = anno_root + "nuscenes_tracking_v2_infos_val.pkl"
-file_client_args = dict(backend="disk")
+train_pkl_path = anno_root + "nuscenes_sparse4d_mmlabv2_11-06_infos_train.pkl"
+val_pkl_path = anno_root + "nuscenes_sparse4d_mmlabv2_11-06_infos_val.pkl"
+backend_args = None
 
 img_norm_cfg = dict(
     mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True
@@ -316,7 +315,7 @@ train_pipeline = [
         coord_type="LIDAR",
         load_dim=5,
         use_dim=5,
-        file_client_args=file_client_args,
+        backend_args=backend_args,
     ),
     dict(type="ResizeCropFlipImage"),
     dict(
@@ -327,31 +326,36 @@ train_pipeline = [
     dict(type="PhotoMetricDistortionMultiViewImage"),
     dict(type="NormalizeMultiviewImage", **img_norm_cfg),
     dict(
+        type='TrackLoadAnnotations3D',
+        with_bbox_3d=True,
+        with_label_3d=True,
+        with_attr_label=False,
+        with_forecasting=False),
+    dict(
         type="CircleObjectRangeFilter",
         class_dist_thred=[55] * len(class_names),
     ),
-    dict(type="InstanceNameFilter", classes=class_names),
-    # dict(type="NuScenesSparse4DAdaptor"),
+    # dict(type="InstanceNameFilter", classes=class_names),
     dict(
         type="Pack3DTrackInputs",
         keys=[
             "img",
-            "timestamp",
-            "projection_mat",
-            "image_wh",
-            "gt_depth",
-            "focal",
+            "lidar2img",
+            "img_shape",
             "gt_bboxes_3d",
             "gt_labels_3d",
+            "instance_inds"
         ],
-        meta_keys=["T_global", "T_global_inv", "timestamp", "instance_id"],
+        meta_keys=["lidar2global", "timestamp", "intrinsics",
+                   "lidar2img", "img_shape", "sample_idx", "scene_token",
+                   "gt_depth" # put depth in meta-keys since it doesn't stack easily into input or gt target structures
+                   ],
     ),
 ]
 test_pipeline = [
     dict(type="LoadMultiViewImageFromFiles", to_float32=True),
     dict(type="ResizeCropFlipImage"),
     dict(type="NormalizeMultiviewImage", **img_norm_cfg),
-    # dict(type="NuScenesSparse4DAdaptor"),
     dict(
         type="Pack3DTrackInputs",
         keys=[
@@ -359,13 +363,13 @@ test_pipeline = [
             "lidar2img",
             "img_shape",
         ],
-        meta_keys=["lidar2global", "timestamp",
+        meta_keys=["lidar2global", "timestamp", "intrinsics",
                    "lidar2img", "img_shape", "sample_idx", "scene_token"],
     ),
 ]
 
 input_modality = dict(
-    use_lidar=False,
+    use_lidar=True,
     use_camera=True,
     use_radar=False,
     use_map=False,
@@ -392,56 +396,40 @@ data_basic_config = dict(
     # version="v1.0-trainval",
     metainfo=metainfo,
 )
-
 data_aug_conf = {
-    "resize_lim": (0.40, 0.47),
-    "final_dim": input_shape[::-1],
-    "bot_pct_lim": (0.0, 0.0),
+    "resize_lim": (0.40, 0.47),  # (640, 360) - (752, 423)
+    "final_dim": input_shape,  # (704, 256), (W, H)
+    "bot_pct_lim": (0.0, 0.0),  # unused?
     "rot_lim": (-5.4, 5.4),
-    "H": 900,
     "W": 1600,
+    "H": 900,
     "rand_flip": True,
     "rot3d_range": [-0.3925, 0.3925],
 }
 
-data = dict(
-    samples_per_gpu=batch_size,
-    workers_per_gpu=16,
-    train=dict(
+train_dataloader = dict(
+    batch_size=batch_size,
+    num_workers=16,
+    persistent_workers=True,
+    sampler=dict(type='DefaultSampler'),
+    batch_sampler=dict(type='TrackSampler3D', shuffle=True, clip_len=20),
+    collate_fn=dict(type='default_collate'),
+    dataset=dict(
         **data_basic_config,
         ann_file=train_pkl_path,
         pipeline=train_pipeline,
+        data_aug_conf=data_aug_conf,
         test_mode=False,
-        data_aug_conf=data_aug_conf,
-        with_seq_flag=True,
-        sequences_split_num=2,
-        keep_consistent_seq_aug=True,
-    ),
-    val=dict(
-        **data_basic_config,
-        ann_file=val_pkl_path,
-        pipeline=test_pipeline,
-        data_aug_conf=data_aug_conf,
-        test_mode=True,
-        tracking=tracking_test,
-        tracking_threshold=tracking_threshold,
-    ),
-    test=dict(
-        **data_basic_config,
-        ann_file=val_pkl_path,
-        pipeline=test_pipeline,
-        data_aug_conf=data_aug_conf,
-        test_mode=True,
-        tracking=tracking_test,
-        tracking_threshold=tracking_threshold,
-    ),
+        filter_empty_gt=False, # we should still be able to train on empty GT, and breaks stream training
+        # tracking=tracking_test,
+        # tracking_threshold=tracking_threshold
+    )
 )
 
 val_dataloader = dict(
     batch_size=batch_size,
     num_workers=16,
     persistent_workers=True,
-    drop_last=False,
     sampler=dict(type='DefaultSampler'),
     batch_sampler=dict(type='TrackSampler3D', shuffle=False, clip_len=-1),
     collate_fn=dict(type='default_collate'),
@@ -468,47 +456,63 @@ val_evaluator = dict(
 test_evaluator = val_evaluator
 
 # ================== training ========================
-optimizer = dict(
-    type="AdamW",
-    lr=6e-4,
-    weight_decay=0.001,
+lr = 6e-4
+optim_wrapper = dict(
+    type="OptimWrapper",
+    optimizer=dict(type="AdamW", lr=lr, weight_decay=0.001),
+    clip_grad=dict(max_norm=25, norm_type=2),
     paramwise_cfg=dict(
         custom_keys={
             "img_backbone": dict(lr_mult=0.5),
         }
     ),
 )
-optimizer_config = dict(grad_clip=dict(max_norm=25, norm_type=2))
-lr_config = dict(
-    policy="CosineAnnealing",
-    warmup="linear",
-    warmup_iters=500,
-    warmup_ratio=1.0 / 3,
-    min_lr_ratio=1e-3,
-)
-runner = dict(
-    type="IterBasedRunner",
-    max_iters=num_iters_per_epoch * num_epochs,
-)
+
+param_scheduler = [
+    dict(
+        type="LinearLR",
+        start_factor=1.0/3,
+        by_epoch=False,
+        begin=0,
+        end=500
+    ),
+    dict(
+        type="CosineAnnealingLR",
+        begin=500,
+        T_max=num_iters_per_epoch * num_epochs,
+        end=num_iters_per_epoch * num_epochs,
+        by_epoch=False,
+        eta_min=lr * 1e-3
+    )]
+
 # runtime settings
-# train_cfg = dict(by_epoch=True, max_epochs=20, val_interval=20)
-val_cfg = dict()
-test_cfg = dict()
+train_cfg = dict(
+    type="IterBasedTrainLoop",
+    max_iters=num_iters_per_epoch * num_epochs,
+    val_interval=num_iters_per_epoch * checkpoint_epoch_interval)
+val_cfg = dict(type='ValLoop')
+test_cfg = dict(type='TestLoop')
+
+default_hooks = dict(
+    checkpoint=dict(by_epoch=False,
+                    interval=num_iters_per_epoch * checkpoint_epoch_interval),
+    )
 
 
 # ================== eval ========================
-vis_pipeline = [
-    dict(type="LoadMultiViewImageFromFiles", to_float32=True),
-    dict(
-        type="Pack3DDetInputs",
-        keys=["img"],
-        meta_keys=["timestamp", "lidar2img"],
-    ),
-]
-evaluation = dict(
-    interval=num_iters_per_epoch * checkpoint_epoch_interval,
-    pipeline=vis_pipeline,
-    # out_dir="./vis",  # for visualization
-)
+# vis_pipeline = [
+#     dict(type="LoadMultiViewImageFromFiles", to_float32=True),
+#     dict(
+#         type="Pack3DDetInputs",
+#         keys=["img"],
+#         meta_keys=["timestamp", "lidar2img"],
+#     ),
+# ]
+# evaluation = dict(
+#     interval=num_iters_per_epoch * checkpoint_epoch_interval,
+#     pipeline=vis_pipeline,
+#     # out_dir="./vis",  # for visualization
+# )
+
 custom_imports = dict(
-    imports=["projects.mmdet3d_plugin.models.sparse4d"], allow_failed_imports=False)
+    imports=["projects.mmdet3d_plugin"], allow_failed_imports=False)

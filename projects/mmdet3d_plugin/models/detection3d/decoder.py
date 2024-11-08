@@ -39,11 +39,11 @@ class SparseBox3DDecoder(object):
         self,
         cls_scores,
         box_preds,
-        instance_id=None,
+        instance_inds=None,
         quality=None,
         output_idx=-1,
     ):
-        squeeze_cls = instance_id is not None
+        squeeze_cls = instance_inds is not None
 
         cls_scores = cls_scores[output_idx].sigmoid()
 
@@ -100,8 +100,8 @@ class SparseBox3DDecoder(object):
             }
             if quality is not None:
                 output_dict["cls_scores"] = scores_origin.cpu()
-            if instance_id is not None:
-                ids = instance_id[i, indices[i]]
+            if instance_inds is not None:
+                ids = instance_inds[i, indices[i]]
                 if self.score_threshold is not None:
                     ids = ids[mask[i]]
                 output_dict["track_ids"] = ids

@@ -78,7 +78,7 @@ class InstanceBank(nn.Module):
         self.mask = None
         self.confidence = None
         self.temp_confidence = None
-        self.instance_id = None
+        self.instance_inds = None
         self.prev_id = 0
 
     def get(self, batch_size, timestamp, batched_global2lidar, dn_metas=None):
@@ -173,11 +173,11 @@ class InstanceBank(nn.Module):
             self.mask[:, None, None], selected_feature, instance_feature
         )
         anchor = torch.where(self.mask[:, None, None], selected_anchor, anchor)
-        if self.instance_id is not None:
-            self.instance_id = torch.where(
+        if self.instance_inds is not None:
+            self.instance_inds = torch.where(
                 self.mask[:, None],
-                self.instance_id,
-                self.instance_id.new_tensor(-1),
+                self.instance_inds,
+                self.instance_inds.new_tensor(-1),
             )
 
         if num_dn > 0:
@@ -218,28 +218,28 @@ class InstanceBank(nn.Module):
             (self.cached_feature, self.cached_anchor),
         ) = topk(confidence, self.num_temp_instances, instance_feature, anchor)
 
-    def get_instance_id(self, confidence, anchor=None, threshold=None):
+    def get_instance_ind(self, confidence, anchor=None, threshold=None):
         confidence = confidence.max(dim=-1).values.sigmoid()
-        instance_id = confidence.new_full(confidence.shape, -1).long()
+        instance_inds = confidence.new_full(confidence.shape, -1).long()
 
         if (
-            self.instance_id is not None
-            and self.instance_id.shape[0] == instance_id.shape[0]
+            self.instance_inds is not None
+            and self.instance_inds.shape[0] == instance_inds.shape[0]
         ):
-            instance_id[:, : self.instance_id.shape[1]] = self.instance_id
+            instance_inds[:, : self.instance_inds.shape[1]] = self.instance_inds
 
-        mask = instance_id < 0
+        mask = instance_inds < 0
         if threshold is not None:
             mask = mask & (confidence >= threshold)
         num_new_instance = mask.sum()
-        new_ids = torch.arange(num_new_instance).to(instance_id) + self.prev_id
-        instance_id[torch.where(mask)] = new_ids
+        new_ids = torch.arange(num_new_instance).to(instance_inds) + self.prev_id
+        instance_inds[torch.where(mask)] = new_ids
         self.prev_id += num_new_instance
         if self.num_temp_instances > 0:
-            self.update_instance_id(instance_id, confidence)
-        return instance_id
+            self.update_instance_inds(instance_inds, confidence)
+        return instance_inds
 
-    def update_instance_id(self, instance_id=None, confidence=None):
+    def update_instance_inds(self, instance_inds=None, confidence=None):
         if self.temp_confidence is None:
             if confidence.dim() == 3:  # bs, num_anchor, num_cls
                 temp_conf = confidence.max(dim=-1).values
@@ -247,12 +247,12 @@ class InstanceBank(nn.Module):
                 temp_conf = confidence
         else:
             temp_conf = self.temp_confidence
-        instance_id = topk(temp_conf, self.num_temp_instances, instance_id)[1][
+        instance_inds = topk(temp_conf, self.num_temp_instances, instance_inds)[1][
             0
         ]
-        instance_id = instance_id.squeeze(dim=-1)
-        self.instance_id = F.pad(
-            instance_id,
+        instance_inds = instance_inds.squeeze(dim=-1)
+        self.instance_inds = F.pad(
+            instance_inds,
             (0, self.num_anchor - self.num_temp_instances),
             value=-1,
         )

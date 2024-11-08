@@ -2,6 +2,7 @@
 from inspect import signature
 from typing import Dict, List, Optional
 
+import numpy as np
 import torch
 from mmdet3d.models.detectors.mvx_two_stage import MVXTwoStageDetector
 from mmdet3d.registry import MODELS
@@ -55,7 +56,7 @@ class Sparse4D(MVXTwoStageDetector):
                 True, True, rotate=1, offset=False, ratio=0.5, mode=1, prob=0.7
             )
 
-    def extract_feat(self, img, return_depth=False, metas=None):
+    def extract_feat(self, img, return_depth: bool = False, focal=None):
         bs = img.shape[0]
         if img.dim() == 5:  # multi-view
             num_cams = img.shape[1]
@@ -65,6 +66,7 @@ class Sparse4D(MVXTwoStageDetector):
         if self.use_grid_mask:
             img = self.grid_mask(img)
         if "metas" in signature(self.img_backbone.forward).parameters:
+            raise NotImplementedError("metas is not supported.")
             feature_maps = self.img_backbone(img, num_cams, metas=metas)
         else:
             feature_maps = self.img_backbone(img)
@@ -75,31 +77,58 @@ class Sparse4D(MVXTwoStageDetector):
                 feat, (bs, num_cams) + feat.shape[1:]
             )
         if return_depth and self.depth_branch is not None:
-            depths = self.depth_branch(feature_maps, metas.get("focal"))
+            depths = self.depth_branch(feature_maps, focal)
         else:
             depths = None
         if self.use_deformable_func:
             feature_maps = feature_maps_format(feature_maps)
-        if return_depth:
-            return feature_maps, depths
-        return feature_maps
+        return feature_maps, depths
 
-    def forward_train(self, img, **data):
-        feature_maps, depths = self.extract_feat(img, True, data)
-        model_outs = self.head(feature_maps, data)
-        output = self.head.loss(model_outs, data)
-        if depths is not None and "gt_depth" in data:
+    def loss(self, batch_inputs_dict: Dict,
+             batch_data_samples: List[Det3DDataSample],
+             **kwargs) -> List[Det3DDataSample]:
+        batch_img = batch_inputs_dict["img"]
+        batch_focal = torch.tensor([
+            [intr[0, 0] for intr in bs.metainfo["intrinsics"]]
+            for bs in batch_data_samples], device=batch_img.device)  # (bs, 6)
+        feature_maps, depths = self.extract_feat(batch_img, True, batch_focal)
+        # timestamp needs to be type double to avoid quantization errors
+        timestamp = torch.tensor([bs.metainfo["timestamp"]
+                                 for bs in batch_data_samples], dtype=torch.float64)
+        model_outs = self.head(
+            feature_maps,
+            timestamp=timestamp,
+            projection_mat=batch_inputs_dict["lidar2img"].to(torch.float32),
+            # flip (H, W) to (W, H)
+            image_wh=batch_inputs_dict["img_shape"][..., [1, 0]],
+            batch_data_samples=batch_data_samples,
+        )
+        gt_cls = [bs.gt_instances_3d.labels_3d for bs in batch_data_samples]
+        gt_reg = [bs.gt_instances_3d.bboxes_3d for bs in batch_data_samples]
+
+        output = self.head.loss(
+            model_outs,
+            gt_cls,
+            gt_reg)
+        gt_depth = [
+            torch.from_numpy(
+                np.stack([depth.metainfo["gt_depth"][i]
+                         for depth in batch_data_samples])
+            ).to(device=batch_img.device)
+            for i in range(len(batch_data_samples[0].metainfo["gt_depth"]))
+        ]
+        if depths is not None:
             output["loss_dense_depth"] = self.depth_branch.loss(
-                depths, data["gt_depth"]
+                depths, gt_depth
             )
         return output
 
     def predict(self, batch_inputs_dict: Dict[str, Optional[Tensor]],
                 batch_data_samples: List[Det3DDataSample],
                 **kwargs) -> List[Det3DDataSample]:
-        img = batch_inputs_dict["img"]
-        feature_maps = self.extract_feat(img)
-        # timestamp needs to be double to avoid quantization errors
+        batch_img = batch_inputs_dict["img"]
+        feature_maps, _ = self.extract_feat(batch_img)
+        # timestamp needs to be type double to avoid quantization errors
         timestamp = torch.tensor([bs.metainfo["timestamp"]
                                  for bs in batch_data_samples], dtype=torch.float64)
         model_outs = self.head(
@@ -116,10 +145,3 @@ class Sparse4D(MVXTwoStageDetector):
         )
         output = [op for op in output if not op.metainfo["padding"]]
         return output
-
-    # def aug_test(self, img, **data):
-    #     # fake test time augmentation
-    #     for key in data.keys():
-    #         if isinstance(data[key], list):
-    #             data[key] = data[key][0]
-    #     return self.simple_test(img[0], **data)

@@ -251,7 +251,7 @@ class NuScenesTrackingMetric(NuScenesMetric):
                 result_path=track_path,
                 eval_set=eval_set_map[self.version],
                 output_dir=output_dir,
-                verbose=False,
+                verbose=True,
                 nusc_version=self.version,
                 nusc_dataroot=self.data_root,
             )

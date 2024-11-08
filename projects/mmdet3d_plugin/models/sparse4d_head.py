@@ -185,17 +185,17 @@ class Sparse4DHead(BaseModule):
         dn_metas = None
         temp_dn_reg_target = None
         if self.training and hasattr(self.sampler, "get_dn_anchors"):
-            if "instance_id" in batch_metas[0]:
-                gt_instance_id = [
-                    torch.from_numpy(x["instance_id"]).cuda()
+            if "instance_inds" in batch_metas[0]:
+                gt_instance_inds = [
+                    torch.from_numpy(x["instance_inds"]).cuda()
                     for x in batch_metas
                 ]
             else:
-                gt_instance_id = None
+                gt_instance_inds = None
             dn_metas = self.sampler.get_dn_anchors(
                 [ds.gt_instances_3d.labels_3d for ds in batch_data_samples],
                 [ds.gt_instances_3d.bboxes_3d for ds in batch_data_samples],
-                gt_instance_id,
+                gt_instance_inds,
             )
         if dn_metas is not None:
             (
@@ -399,13 +399,17 @@ class Sparse4DHead(BaseModule):
             feature_maps
         )
         if not self.training:
-            instance_id = self.instance_bank.get_instance_id(
+            instance_inds = self.instance_bank.get_instance_ind(
                 cls, anchor, self.decoder.score_threshold
             )
-            output["instance_id"] = instance_id
+            output["instance_inds"] = instance_inds
         return output
 
-    def loss(self, model_outs, data, feature_maps=None):
+    def loss(self,
+             model_outs,
+             gt_cls: List[torch.Tensor],
+             gt_reg: List[torch.Tensor],
+             feature_maps=None):
         # ===================== prediction losses ======================
         cls_scores = model_outs["classification"]
         reg_preds = model_outs["prediction"]
@@ -418,8 +422,8 @@ class Sparse4DHead(BaseModule):
             cls_target, reg_target, reg_weights = self.sampler.sample(
                 cls,
                 reg,
-                data[self.gt_cls_key],
-                data[self.gt_reg_key],
+                gt_cls,
+                gt_reg,
             )
             reg_target = reg_target[..., : len(self.reg_weights)]
             mask = torch.logical_not(torch.all(reg_target == 0, dim=-1))
@@ -542,7 +546,7 @@ class Sparse4DHead(BaseModule):
         return self.decoder.decode(
             model_outs["classification"],
             model_outs["prediction"],
-            model_outs.get("instance_id"),
+            model_outs.get("instance_inds"),
             model_outs.get("quality"),
             output_idx=output_idx,
         )

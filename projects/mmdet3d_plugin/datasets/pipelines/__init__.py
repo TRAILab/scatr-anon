@@ -10,7 +10,7 @@ from .augment import (
     BBoxRotation,
     PhotoMetricDistortionMultiViewImage,
 )
-from .loading import LoadMultiViewImageFromFiles, LoadPointsFromFile
+from .loading import TrackLoadAnnotations3D
 from .track_transform_3d import TrackSample
 from .formatting import Pack3DTrackInputs
 
@@ -23,8 +23,7 @@ __all__ = [
     "NormalizeMultiviewImage",
     "PhotoMetricDistortionMultiViewImage",
     "NuScenesSparse4DAdaptor",
-    "LoadMultiViewImageFromFiles",
-    "LoadPointsFromFile",
+    "TrackLoadAnnotations3D",
     "TrackSample",
     "Pack3DTrackInputs",
 ]
