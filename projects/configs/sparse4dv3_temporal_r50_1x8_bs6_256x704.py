@@ -456,7 +456,7 @@ val_evaluator = dict(
 test_evaluator = val_evaluator
 
 # ================== training ========================
-lr = 6e-4
+lr = 7.5e-5*num_gpus
 optim_wrapper = dict(
     type="OptimWrapper",
     optimizer=dict(type="AdamW", lr=lr, weight_decay=0.001),
@@ -496,6 +496,7 @@ test_cfg = dict(type='TestLoop')
 default_hooks = dict(
     checkpoint=dict(by_epoch=False,
                     interval=num_iters_per_epoch * checkpoint_epoch_interval),
+    logger=dict(interval=50)
     )
 
 vis_backends = [

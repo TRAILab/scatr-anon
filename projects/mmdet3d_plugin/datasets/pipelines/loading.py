@@ -11,7 +11,9 @@ class TrackLoadAnnotations3D(LoadAnnotations3D):
         self.with_forecasting = with_forecasting
 
     def _load_track_ids(self, results):
-        results["instance_inds"] = results["ann_info"]["instance_inds"]
+        if not "instance_inds" in results["ann_info"]:
+            assert len(results["ann_info"]["gt_labels_3d"]) == 0, f"{results['ann_info']}"
+        results["instance_inds"] = results["ann_info"].get("instance_inds", [])
         return results
 
     def _load_forecasting(self, results):
