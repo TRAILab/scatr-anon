@@ -154,6 +154,8 @@ class CircleObjectRangeFilter(object):
 
     def __call__(self, input_dict):
         gt_bboxes_3d = input_dict["gt_bboxes_3d"]
+        if len(gt_bboxes_3d) == 0:
+            return input_dict
         gt_labels_3d = input_dict["gt_labels_3d"]
         dist = np.sqrt(
             np.sum(gt_bboxes_3d.numpy()[:, :2] ** 2, axis=-1)

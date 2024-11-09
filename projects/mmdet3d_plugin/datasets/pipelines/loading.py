@@ -13,7 +13,7 @@ class TrackLoadAnnotations3D(LoadAnnotations3D):
     def _load_track_ids(self, results):
         if not "instance_inds" in results["ann_info"]:
             assert len(results["ann_info"]["gt_labels_3d"]) == 0, f"{results['ann_info']}"
-        results["instance_inds"] = results["ann_info"].get("instance_inds", [])
+        results["instance_inds"] = results["ann_info"].get("instance_inds", np.array([]))
         return results
 
     def _load_forecasting(self, results):
