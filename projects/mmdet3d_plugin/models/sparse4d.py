@@ -143,5 +143,5 @@ class Sparse4D(MVXTwoStageDetector):
         output = self.add_pred_to_datasample(
             batch_data_samples, data_instances_3d=results
         )
-        output = [op for op in output if not op.metainfo["padding"]]
+        # output = [op for op in output if not op.metainfo["padding"]]
         return output
