@@ -60,11 +60,12 @@ plugin = True
 plugin_dir = "projects/mmdet3d_plugin/"
 dist_params = dict(backend="nccl")
 log_level = "INFO"
-work_dir = "work_dirs/sparse4dv3_temporal_r50_1x8_bs6_256x704"
+input_shape = (704, 256)
 
-total_batch_size = 6
-num_gpus = 1
-batch_size = total_batch_size // num_gpus
+batch_size = 6
+num_gpus = 4
+total_batch_size = batch_size * num_gpus
+work_dir = f"work_dirs/sparse4dv3_temporal_r50_1x{num_gpus}_bs{batch_size}_{input_shape[1]}x{input_shape[0]}_mmlabv2"
 num_iters_per_epoch = int(28130 // (num_gpus * batch_size))
 num_epochs = 100
 checkpoint_epoch_interval = 20
@@ -83,7 +84,6 @@ load_from = None
 resume_from = None
 workflow = [("train", 1)]
 fp16 = dict(loss_scale=32.0)
-input_shape = (704, 256)
 
 tracking_test = True
 tracking_threshold = 0.2
@@ -348,7 +348,7 @@ train_pipeline = [
         ],
         meta_keys=["lidar2global", "timestamp", "intrinsics",
                    "lidar2img", "img_shape", "sample_idx", "scene_token",
-                   "gt_depth" # put depth in meta-keys since it doesn't stack easily into input or gt target structures
+                   "gt_depth"  # put depth in meta-keys since it doesn't stack easily into input or gt target structures
                    ],
     ),
 ]
@@ -420,7 +420,8 @@ train_dataloader = dict(
         pipeline=train_pipeline,
         data_aug_conf=data_aug_conf,
         test_mode=False,
-        filter_empty_gt=False, # we should still be able to train on empty GT, and breaks stream training
+        # we should still be able to train on empty GT, and breaks stream training
+        filter_empty_gt=False,
         # tracking=tracking_test,
         # tracking_threshold=tracking_threshold
     )
@@ -456,7 +457,7 @@ val_evaluator = dict(
 test_evaluator = val_evaluator
 
 # ================== training ========================
-lr = 7.5e-5*num_gpus
+lr = 1.0e-5*total_batch_size
 optim_wrapper = dict(
     type="OptimWrapper",
     optimizer=dict(type="AdamW", lr=lr, weight_decay=0.001),
@@ -497,7 +498,8 @@ default_hooks = dict(
     checkpoint=dict(by_epoch=False,
                     interval=num_iters_per_epoch * checkpoint_epoch_interval),
     logger=dict(interval=50)
-    )
+)
+log_processor = dict(by_epoch=False)
 
 vis_backends = [
     dict(type="LocalVisBackend"),
@@ -524,3 +526,8 @@ visualizer = dict(
 
 custom_imports = dict(
     imports=["projects.mmdet3d_plugin"], allow_failed_imports=False)
+
+# set NCCL timeout to 3H to account for the validation computation taking longer than default 30 min on multiple GPUs
+env_cfg = dict(
+    dist_cfg=dict(timeout=10800),
+)
