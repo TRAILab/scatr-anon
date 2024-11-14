@@ -5,7 +5,7 @@ export PORT=29532
 gpus=(${CUDA_VISIBLE_DEVICES//,/ })
 gpu_num=${#gpus[@]}
 
-config=projects/configs/$1.py
+config=$1
 checkpoint=$2
 
 echo "number of gpus: "${gpu_num}
