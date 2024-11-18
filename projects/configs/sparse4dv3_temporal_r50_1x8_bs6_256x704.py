@@ -60,7 +60,7 @@ plugin = True
 plugin_dir = "projects/mmdet3d_plugin/"
 dist_params = dict(backend="nccl")
 log_level = "INFO"
-work_dir = "work_dirs/sparse4dv3_temporal_r50_1x8_bs6_256x704"
+work_dir = "work_dirs/sparse4dv3_temporal_r50_1x8_bs6_256x704_mmlabv2"
 
 total_batch_size = 6
 num_gpus = 1
