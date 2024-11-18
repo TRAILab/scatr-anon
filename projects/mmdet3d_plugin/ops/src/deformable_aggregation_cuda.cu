@@ -1,4 +1,3 @@
-
 #include <ATen/ATen.h>
 #include <ATen/cuda/CUDAContext.h>
 #include <cuda.h>
@@ -10,9 +9,9 @@
 #include <stdlib.h>
 
 
-__device__ float bilinear_sampling(
-    const float *&bottom_data, const int &height, const int &width,
-    const int &num_embeds, const float &h_im, const float &w_im,
+__device__ double bilinear_sampling(
+    const double *&bottom_data, const int &height, const int &width,
+    const int &num_embeds, const double &h_im, const double &w_im,
     const int &base_ptr
 ) {
   const int h_low = floorf(h_im);
@@ -20,9 +19,9 @@ __device__ float bilinear_sampling(
   const int h_high = h_low + 1;
   const int w_high = w_low + 1;
 
-  const float lh = h_im - h_low;
-  const float lw = w_im - w_low;
-  const float hh = 1 - lh, hw = 1 - lw;
+  const double lh = h_im - h_low;
+  const double lw = w_im - w_low;
+  const double hh = 1 - lh, hw = 1 - lw;
 
   const int w_stride = num_embeds;
   const int h_stride = width * w_stride;
@@ -31,49 +30,49 @@ __device__ float bilinear_sampling(
   const int w_low_ptr_offset = w_low * w_stride;
   const int w_high_ptr_offset = w_low_ptr_offset + w_stride;
 
-  float v1 = 0;
+  double v1 = 0;
   if (h_low >= 0 && w_low >= 0) {
     const int ptr1 = h_low_ptr_offset + w_low_ptr_offset + base_ptr;
     v1 = bottom_data[ptr1];
   }
-  float v2 = 0;
+  double v2 = 0;
   if (h_low >= 0 && w_high <= width - 1) {
     const int ptr2 = h_low_ptr_offset + w_high_ptr_offset + base_ptr;
     v2 = bottom_data[ptr2];
   }
-  float v3 = 0;
+  double v3 = 0;
   if (h_high <= height - 1 && w_low >= 0) {
     const int ptr3 = h_high_ptr_offset + w_low_ptr_offset + base_ptr;
     v3 = bottom_data[ptr3];
   }
-  float v4 = 0;
+  double v4 = 0;
   if (h_high <= height - 1 && w_high <= width - 1) {
     const int ptr4 = h_high_ptr_offset + w_high_ptr_offset + base_ptr;
     v4 = bottom_data[ptr4];
   }
 
-  const float w1 = hh * hw, w2 = hh * lw, w3 = lh * hw, w4 = lh * lw;
+  const double w1 = hh * hw, w2 = hh * lw, w3 = lh * hw, w4 = lh * lw;
 
-  const float val = (w1 * v1 + w2 * v2 + w3 * v3 + w4 * v4);
+  const double val = (w1 * v1 + w2 * v2 + w3 * v3 + w4 * v4);
   return val;
 }
 
 
 __device__ void bilinear_sampling_grad(
-    const float *&bottom_data, const float &weight,
+    const double *&bottom_data, const double &weight,
     const int &height, const int &width,
-    const int &num_embeds, const float &h_im, const float &w_im,
+    const int &num_embeds, const double &h_im, const double &w_im,
     const int &base_ptr,
-    const float &grad_output,
-    float *&grad_mc_ms_feat, float *grad_sampling_location, float *grad_weights) {
+    const double &grad_output,
+    double *&grad_mc_ms_feat, double *grad_sampling_location, double *grad_weights) {
   const int h_low = floorf(h_im);
   const int w_low = floorf(w_im);
   const int h_high = h_low + 1;
   const int w_high = w_low + 1;
 
-  const float lh = h_im - h_low;
-  const float lw = w_im - w_low;
-  const float hh = 1 - lh, hw = 1 - lw;
+  const double lh = h_im - h_low;
+  const double lw = w_im - w_low;
+  const double hh = 1 - lh, hw = 1 - lw;
 
   const int w_stride = num_embeds;
   const int h_stride = width * w_stride;
@@ -82,11 +81,11 @@ __device__ void bilinear_sampling_grad(
   const int w_low_ptr_offset = w_low * w_stride;
   const int w_high_ptr_offset = w_low_ptr_offset + w_stride;
 
-  const float w1 = hh * hw, w2 = hh * lw, w3 = lh * hw, w4 = lh * lw;
-  const float top_grad_mc_ms_feat = grad_output * weight;
-  float grad_h_weight = 0, grad_w_weight = 0;
+  const double w1 = hh * hw, w2 = hh * lw, w3 = lh * hw, w4 = lh * lw;
+  const double top_grad_mc_ms_feat = grad_output * weight;
+  double grad_h_weight = 0, grad_w_weight = 0;
 
-  float v1 = 0;
+  double v1 = 0;
   if (h_low >= 0 && w_low >= 0) {
     const int ptr1 = h_low_ptr_offset + w_low_ptr_offset + base_ptr;
     v1 = bottom_data[ptr1];
@@ -94,7 +93,7 @@ __device__ void bilinear_sampling_grad(
     grad_w_weight -= hh * v1;
     atomicAdd(grad_mc_ms_feat + ptr1, w1 * top_grad_mc_ms_feat);
   }
-  float v2 = 0;
+  double v2 = 0;
   if (h_low >= 0 && w_high <= width - 1) {
     const int ptr2 = h_low_ptr_offset + w_high_ptr_offset + base_ptr;
     v2 = bottom_data[ptr2];
@@ -102,7 +101,7 @@ __device__ void bilinear_sampling_grad(
     grad_w_weight += hh * v2;
     atomicAdd(grad_mc_ms_feat + ptr2, w2 * top_grad_mc_ms_feat);
   }
-  float v3 = 0;
+  double v3 = 0;
   if (h_high <= height - 1 && w_low >= 0) {
     const int ptr3 = h_high_ptr_offset + w_low_ptr_offset + base_ptr;
     v3 = bottom_data[ptr3];
@@ -110,7 +109,7 @@ __device__ void bilinear_sampling_grad(
     grad_w_weight -= lh * v3;
     atomicAdd(grad_mc_ms_feat + ptr3, w3 * top_grad_mc_ms_feat);
   }
-  float v4 = 0;
+  double v4 = 0;
   if (h_high <= height - 1 && w_high <= width - 1) {
     const int ptr4 = h_high_ptr_offset + w_high_ptr_offset + base_ptr;
     v4 = bottom_data[ptr4];
@@ -119,7 +118,7 @@ __device__ void bilinear_sampling_grad(
     atomicAdd(grad_mc_ms_feat + ptr4, w4 * top_grad_mc_ms_feat);
   }
 
-  const float val = (w1 * v1 + w2 * v2 + w3 * v3 + w4 * v4);
+  const double val = (w1 * v1 + w2 * v2 + w3 * v3 + w4 * v4);
   atomicAdd(grad_weights, grad_output * val);
   atomicAdd(grad_sampling_location, width * grad_w_weight * top_grad_mc_ms_feat);
   atomicAdd(grad_sampling_location + 1, height * grad_h_weight * top_grad_mc_ms_feat);
@@ -128,12 +127,12 @@ __device__ void bilinear_sampling_grad(
 
 __global__ void deformable_aggregation_kernel(
     const int num_kernels,
-    float* output,
-    const float* mc_ms_feat,
+    double* output,
+    const double* mc_ms_feat,
     const int* spatial_shape,
     const int* scale_start_index,
-    const float* sample_location,
-    const float* weights,
+    const double* sample_location,
+    const double* weights,
     int batch_size,
     int num_cams,
     int num_feat,
@@ -146,7 +145,7 @@ __global__ void deformable_aggregation_kernel(
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= num_kernels) return;
 
-    const float weight = *(weights + idx / (num_embeds / num_groups));
+    const double weight = *(weights + idx / (num_embeds / num_groups));
     const int channel_index = idx % num_embeds;
     idx /= num_embeds;
     const int scale_index = idx % num_scale;
@@ -165,9 +164,9 @@ __global__ void deformable_aggregation_kernel(
     anchor_index = batch_index * num_anchors + anchor_index;
     const int loc_offset = ((anchor_index * num_pts + pts_index) * num_cams + cam_index) << 1;
 
-    const float loc_w = sample_location[loc_offset];
+    const double loc_w = sample_location[loc_offset];
     if (loc_w <= 0 || loc_w >= 1) return;
-    const float loc_h = sample_location[loc_offset + 1];
+    const double loc_h = sample_location[loc_offset + 1];
     if (loc_h <= 0 || loc_h >= 1) return;
     
     int cam_scale_index = cam_index * num_scale + scale_index;
@@ -177,8 +176,8 @@ __global__ void deformable_aggregation_kernel(
     const int h = spatial_shape[cam_scale_index];
     const int w = spatial_shape[cam_scale_index + 1];
 
-    const float h_im = loc_h * h - 0.5;
-    const float w_im = loc_w * w - 0.5;
+    const double h_im = loc_h * h - 0.5;
+    const double w_im = loc_w * w - 0.5;
 
     atomicAdd(
         output + anchor_index * num_embeds + channel_index,
@@ -189,15 +188,15 @@ __global__ void deformable_aggregation_kernel(
 
 __global__ void deformable_aggregation_grad_kernel(
     const int num_kernels,
-    const float* mc_ms_feat,
+    const double* mc_ms_feat,
     const int* spatial_shape,
     const int* scale_start_index,
-    const float* sample_location,
-    const float* weights,
-    const float* grad_output,
-    float* grad_mc_ms_feat,
-    float* grad_sampling_location,
-    float* grad_weights,
+    const double* sample_location,
+    const double* weights,
+    const double* grad_output,
+    double* grad_mc_ms_feat,
+    double* grad_sampling_location,
+    double* grad_weights,
     int batch_size,
     int num_cams,
     int num_feat,
@@ -229,12 +228,12 @@ __global__ void deformable_aggregation_grad_kernel(
     anchor_index = batch_index * num_anchors + anchor_index;
     const int loc_offset = ((anchor_index * num_pts + pts_index) * num_cams + cam_index) << 1;
 
-    const float loc_w = sample_location[loc_offset];
+    const double loc_w = sample_location[loc_offset];
     if (loc_w <= 0 || loc_w >= 1) return;
-    const float loc_h = sample_location[loc_offset + 1];
+    const double loc_h = sample_location[loc_offset + 1];
     if (loc_h <= 0 || loc_h >= 1) return;
     
-    const float grad = grad_output[anchor_index*num_embeds + channel_index];
+    const double grad = grad_output[anchor_index*num_embeds + channel_index];
 
     int cam_scale_index = cam_index * num_scale + scale_index;
     const int value_offset = (batch_index * num_feat + scale_start_index[cam_scale_index]) * num_embeds + channel_index;
@@ -243,16 +242,16 @@ __global__ void deformable_aggregation_grad_kernel(
     const int h = spatial_shape[cam_scale_index];
     const int w = spatial_shape[cam_scale_index + 1];
 
-    const float h_im = loc_h * h - 0.5;
-    const float w_im = loc_w * w - 0.5;
+    const double h_im = loc_h * h - 0.5;
+    const double w_im = loc_w * w - 0.5;
 
     /* atomicAdd( */
     /*     output + anchor_index * num_embeds + channel_index, */
     /*     bilinear_sampling(mc_ms_feat, h, w, num_embeds, h_im, w_im, value_offset) * weight */
     /* ); */
-    const float weight = weights[weights_ptr];
-    float *grad_weights_ptr = grad_weights + weights_ptr;
-    float *grad_location_ptr = grad_sampling_location + loc_offset;
+    const double weight = weights[weights_ptr];
+    double *grad_weights_ptr = grad_weights + weights_ptr;
+    double *grad_location_ptr = grad_sampling_location + loc_offset;
     bilinear_sampling_grad(
         mc_ms_feat, weight, h, w, num_embeds, h_im, w_im,
         value_offset,
@@ -263,12 +262,12 @@ __global__ void deformable_aggregation_grad_kernel(
 
 
 void deformable_aggregation(
-    float* output,
-    const float* mc_ms_feat,
+    double* output,
+    const double* mc_ms_feat,
     const int* spatial_shape,
     const int* scale_start_index,
-    const float* sample_location,
-    const float* weights,
+    const double* sample_location,
+    const double* weights,
     int batch_size,
     int num_cams,
     int num_feat,
@@ -289,15 +288,15 @@ void deformable_aggregation(
 
 
 void deformable_aggregation_grad(
-  const float* mc_ms_feat,
+  const double* mc_ms_feat,
   const int* spatial_shape,
   const int* scale_start_index,
-  const float* sample_location,
-  const float* weights,
-  const float* grad_output,
-  float* grad_mc_ms_feat,
-  float* grad_sampling_location,
-  float* grad_weights,
+  const double* sample_location,
+  const double* weights,
+  const double* grad_output,
+  double* grad_mc_ms_feat,
+  double* grad_sampling_location,
+  double* grad_weights,
   int batch_size,
   int num_cams,
   int num_feat,
