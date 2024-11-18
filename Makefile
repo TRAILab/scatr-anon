@@ -9,7 +9,7 @@ CKPTS_ROOT_LOCAL=/media/brian/Data/ckpts/sparse4d
 
 DATA_ROOT_APOLLO=/scratch/hpc_nas/datasets/nuscenes/v1.0-trainval
 DATA_ROOT_APOLLO_MINI=/scratch/hpc_nas/datasets/nuscenes/v1.0-mini
-OUTPUT_APOLLO=/home/bcheong/job_artifacts
+OUTPUT_APOLLO=/home/bcheong/job_artifacts/sparse4d-lidar/
 
 DOCKER_OPTS = \
 	-it \

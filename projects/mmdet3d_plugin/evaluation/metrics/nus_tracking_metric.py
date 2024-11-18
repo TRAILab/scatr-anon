@@ -117,6 +117,8 @@ class NuScenesTrackingMetric(NuScenesMetric):
             data_samples (Sequence[dict]): A batch of outputs from the model.
         """
         for data_sample in data_samples:
+            if data_sample["padding"]:
+                continue
             result = dict()
             pred_3d = data_sample["pred_instances_3d"]
             pred_2d = data_sample["pred_instances"]
