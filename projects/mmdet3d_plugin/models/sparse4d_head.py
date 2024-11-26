@@ -185,17 +185,10 @@ class Sparse4DHead(BaseModule):
         dn_metas = None
         temp_dn_reg_target = None
         if self.training and hasattr(self.sampler, "get_dn_anchors"):
-            if "instance_inds" in batch_metas[0]:
-                gt_instance_inds = [
-                    torch.from_numpy(x["instance_inds"]).cuda()
-                    for x in batch_metas
-                ]
-            else:
-                gt_instance_inds = None
             dn_metas = self.sampler.get_dn_anchors(
                 [ds.gt_instances_3d.labels_3d for ds in batch_data_samples],
                 [ds.gt_instances_3d.bboxes_3d for ds in batch_data_samples],
-                gt_instance_inds,
+                [ds.gt_instances_3d.instance_inds for ds in batch_data_samples],
             )
         if dn_metas is not None:
             (
