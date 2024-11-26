@@ -2,7 +2,7 @@ import hashlib
 import numpy as np
 
 def hash_tensor(tensor):
-    return hash_array(tensor.cpu().numpy())
+    return hash_array(tensor.cpu().detach().numpy())
 
 # https://stackoverflow.com/a/77212976
 def hash_array(array):
