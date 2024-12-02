@@ -481,6 +481,7 @@ param_scheduler = [
         type="CosineAnnealingLR",
         by_epoch=True,
         eta_min=lr * 1e-3
+        convert_to_iter_based=True,
     )]
 
 # runtime settings
