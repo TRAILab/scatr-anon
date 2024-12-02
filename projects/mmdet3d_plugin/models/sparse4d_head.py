@@ -172,7 +172,7 @@ class Sparse4DHead(BaseModule):
         ) = self.instance_bank.get(
             batch_size,
             timestamp,
-            batched_global2lidar=[np.linalg.inv(x["lidar2global"])
+            batched_global2lidar=[torch.linalg.inv(x["lidar2global"])
                                   for x in batch_metas],
             dn_metas=self.sampler.dn_metas
         )
