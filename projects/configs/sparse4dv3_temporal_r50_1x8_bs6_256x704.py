@@ -479,27 +479,23 @@ param_scheduler = [
     ),
     dict(
         type="CosineAnnealingLR",
-        begin=500,
-        T_max=num_iters_per_epoch * num_epochs,
-        end=num_iters_per_epoch * num_epochs,
-        by_epoch=False,
+        by_epoch=True,
         eta_min=lr * 1e-3
     )]
 
 # runtime settings
 train_cfg = dict(
-    type="IterBasedTrainLoop",
-    max_iters=num_iters_per_epoch * num_epochs,
-    val_interval=num_iters_per_epoch * checkpoint_epoch_interval)
+    by_epoch=True,
+    max_epochs=num_epochs,
+    val_interval=checkpoint_epoch_interval)
 val_cfg = dict(type='ValLoop')
 test_cfg = dict(type='TestLoop')
 
 default_hooks = dict(
-    checkpoint=dict(by_epoch=False,
-                    interval=num_iters_per_epoch * checkpoint_epoch_interval),
+    checkpoint=dict(by_epoch=True,
+                    interval=checkpoint_epoch_interval),
     logger=dict(interval=50)
 )
-log_processor = dict(by_epoch=False)
 
 vis_backends = [
     dict(type="LocalVisBackend"),
