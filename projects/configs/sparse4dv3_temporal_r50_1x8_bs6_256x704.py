@@ -317,6 +317,12 @@ train_pipeline = [
         use_dim=5,
         backend_args=backend_args,
     ),
+    dict(
+        type='TrackLoadAnnotations3D',
+        with_bbox_3d=True,
+        with_label_3d=True,
+        with_attr_label=False,
+        with_forecasting=False),
     dict(type="ResizeCropFlipImage"),
     dict(
         type="MultiScaleDepthMapGenerator",
@@ -325,12 +331,6 @@ train_pipeline = [
     dict(type="BBoxRotation"),
     dict(type="PhotoMetricDistortionMultiViewImage"),
     dict(type="NormalizeMultiviewImage", **img_norm_cfg),
-    dict(
-        type='TrackLoadAnnotations3D',
-        with_bbox_3d=True,
-        with_label_3d=True,
-        with_attr_label=False,
-        with_forecasting=False),
     dict(
         type="CircleObjectRangeFilter",
         class_dist_thred=[55] * len(class_names),
@@ -531,3 +531,5 @@ custom_imports = dict(
 env_cfg = dict(
     dist_cfg=dict(timeout=10800),
 )
+
+randomness=dict(seed=0, deterministic=True) # for debugging purposes, set deterministic=True
