@@ -162,7 +162,14 @@ class Sparse4DHead(BaseModule):
             and self.sampler.dn_metas["dn_anchor"].shape[0] != batch_size
         ):
             self.sampler.dn_metas = None
-
+        # more precise inversion
+        batched_global2lidar = []
+        for x in batch_metas:
+            g2l = x["lidar2global"].new_zeros((4, 4))
+            g2l[:3, :3] = x["lidar2global"][:3, :3].T
+            g2l[:3, 3] = -g2l[:3, :3] @ x["lidar2global"][:3, 3]
+            g2l[3, 3] = 1
+            batched_global2lidar.append(g2l)
         (
             instance_feature,
             anchor,
@@ -172,8 +179,7 @@ class Sparse4DHead(BaseModule):
         ) = self.instance_bank.get(
             batch_size,
             timestamp,
-            batched_global2lidar=[torch.linalg.inv(x["lidar2global"])
-                                  for x in batch_metas],
+            batched_global2lidar=batched_global2lidar,
             dn_metas=self.sampler.dn_metas
         )
 
