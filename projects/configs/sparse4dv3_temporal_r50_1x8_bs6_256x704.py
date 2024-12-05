@@ -62,7 +62,7 @@ dist_params = dict(backend="nccl")
 log_level = "INFO"
 
 batch_size = 6
-num_gpus = 4
+num_gpus = 8
 total_batch_size = batch_size * num_gpus
 input_shape = (704, 256)
 work_dir = f"work_dirs/sparse4dv3_temporal_r50_1x{num_gpus}_bs{batch_size}_{input_shape[1]}x{input_shape[0]}_mmlabv2"
@@ -412,7 +412,7 @@ train_dataloader = dict(
     num_workers=16,
     persistent_workers=True,
     sampler=dict(type='DefaultSampler'),
-    batch_sampler=dict(type='TrackSampler3D', shuffle=True, clip_len=20),
+    batch_sampler=dict(type='TrackSampler3D', shuffle=True, clip_len=10),
     collate_fn=dict(type='default_collate'),
     dataset=dict(
         **data_basic_config,
