@@ -412,7 +412,7 @@ train_dataloader = dict(
     num_workers=16,
     persistent_workers=True,
     sampler=dict(type='DefaultSampler'),
-    batch_sampler=dict(type='TrackSampler3D', shuffle=True, clip_len=10),
+    batch_sampler=dict(type='TrackSampler3D', shuffle=True, clip_len=10, seq_flip_prob=0.1),
     collate_fn=dict(type='default_collate'),
     dataset=dict(
         **data_basic_config,
@@ -479,27 +479,24 @@ param_scheduler = [
     ),
     dict(
         type="CosineAnnealingLR",
-        begin=500,
-        T_max=num_iters_per_epoch * num_epochs,
-        end=num_iters_per_epoch * num_epochs,
-        by_epoch=False,
-        eta_min=lr * 1e-3
+        by_epoch=True,
+        eta_min=lr * 1e-3,
+        convert_to_iter_based=True,
     )]
 
 # runtime settings
 train_cfg = dict(
-    type="IterBasedTrainLoop",
-    max_iters=num_iters_per_epoch * num_epochs,
-    val_interval=num_iters_per_epoch * checkpoint_epoch_interval)
+    by_epoch=True,
+    max_epochs=num_epochs,
+    val_interval=checkpoint_epoch_interval)
 val_cfg = dict(type='ValLoop')
 test_cfg = dict(type='TestLoop')
 
 default_hooks = dict(
-    checkpoint=dict(by_epoch=False,
-                    interval=num_iters_per_epoch * checkpoint_epoch_interval),
+    checkpoint=dict(by_epoch=True,
+                    interval=checkpoint_epoch_interval),
     logger=dict(interval=50)
 )
-log_processor = dict(by_epoch=False)
 
 vis_backends = [
     dict(type="LocalVisBackend"),

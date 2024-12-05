@@ -22,6 +22,7 @@ class TrackSampler3D(TrackImgSampler):
         shuffle: bool = True,
         clip_len: int = 1,
         use_CBGS: bool = False,
+        seq_flip_prob:float = 0.1,
     ) -> None:
         self.sampler = sampler
         rank, world_size = get_dist_info()
@@ -38,6 +39,7 @@ class TrackSampler3D(TrackImgSampler):
         self.drop_last = drop_last
         self.dataset = sampler.dataset
         self.shuffle = shuffle
+        self.seq_flip_prob = seq_flip_prob
 
         # Hard code here to handle different dataset wrapper
         assert isinstance(
@@ -178,6 +180,9 @@ class TrackSampler3D(TrackImgSampler):
                 # refill with next group when empty
                 if len(active_groups[batch_idx]) == 0:
                     next_group = group_split_rank[batch_idx].pop(0)
+                    if np.random.uniform() < self.seq_flip_prob:
+                        # flip the sequence
+                        next_group = next_group[::-1]
                     group_aug = self.dataset.get_augmentation(next_group)
                     active_groups[batch_idx] = [
                         {

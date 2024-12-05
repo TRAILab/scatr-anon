@@ -53,7 +53,7 @@ class Sparse4D(MVXTwoStageDetector):
             self.depth_branch = None
         if use_grid_mask:
             self.grid_mask = GridMask(
-                True, True, rotate=1, offset=False, ratio=0.5, mode=1, prob=0.7
+                True, True, offset=False, ratio=0.5, mode=1, prob=0.7
             )
 
     def extract_feat(self, img, return_depth: bool = False, focal=None):

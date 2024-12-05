@@ -10,6 +10,8 @@ ENV TORCH_USE_CUDA_DSA=1
 ENV TORCH_NVCC_FLAGS="-Xfatbin -compress-all"
 ENV CMAKE_PREFIX_PATH="$(dirname $(which conda))/../"
 ENV DEBIAN_FRONTEND=noninteractive
+# set CUBLAS_WORKSPACE_CONFIG=:4096:8 for reproducibility
+ENV CUBLAS_WORKSPACE_CONFIG=:4096:8
 
 # Avoid Public GPG key error
 # https://github.com/NVIDIA/nvidia-docker/issues/1631

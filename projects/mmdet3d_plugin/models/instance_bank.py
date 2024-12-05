@@ -98,14 +98,12 @@ class InstanceBank(nn.Module):
             self.mask = torch.abs(time_interval) <= self.max_time_interval
 
             if self.anchor_handler is not None:
-                T_temp2cur = self.cached_anchor.new_tensor(
-                    np.stack(
-                        [
-                            x @ self.history_T_global[i]
-                            for i, x in enumerate(batched_global2lidar)
-                        ]
-                    )
-                )
+                T_temp2cur = torch.stack(
+                    [
+                        x @ self.history_T_global[i]
+                        for i, x in enumerate(batched_global2lidar)
+                    ]
+                ).to(self.cached_anchor.device)
                 self.cached_anchor = self.anchor_handler.anchor_projection(
                     self.cached_anchor,
                     [T_temp2cur],
