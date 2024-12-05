@@ -412,7 +412,7 @@ train_dataloader = dict(
     num_workers=16,
     persistent_workers=True,
     sampler=dict(type='DefaultSampler'),
-    batch_sampler=dict(type='TrackSampler3D', shuffle=True, clip_len=20),
+    batch_sampler=dict(type='TrackSampler3D', shuffle=True, clip_len=10, seq_flip_prob=0.1),
     collate_fn=dict(type='default_collate'),
     dataset=dict(
         **data_basic_config,
