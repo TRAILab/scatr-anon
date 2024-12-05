@@ -302,13 +302,13 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
         dn_cls_target,
         valid_mask,
         dn_id_target,
-        num_noraml_anchor,
+        num_normal_anchor,
         temporal_valid_mask,
     ):
         bs, num_anchor = instance_feature.shape[:2]
         if temporal_valid_mask is None:
             self.dn_metas = None
-        if self.dn_metas is None or num_noraml_anchor >= num_anchor:
+        if self.dn_metas is None or num_normal_anchor >= num_anchor:
             return (
                 instance_feature,
                 anchor,
@@ -319,11 +319,11 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
             )
 
         # split instance_feature and anchor into non-dn and dn
-        num_dn = num_anchor - num_noraml_anchor
+        num_dn = num_anchor - num_normal_anchor
         dn_instance_feature = instance_feature[:, -num_dn:]
         dn_anchor = anchor[:, -num_dn:]
-        instance_feature = instance_feature[:, :num_noraml_anchor]
-        anchor = anchor[:, :num_noraml_anchor]
+        instance_feature = instance_feature[:, :num_normal_anchor]
+        anchor = anchor[:, :num_normal_anchor]
 
         # reshape all dn metas from (bs,num_all_dn,xxx)
         # to (bs, dn_group, num_dn_per_group, xxx)
