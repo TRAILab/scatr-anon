@@ -457,7 +457,7 @@ val_evaluator = dict(
 test_evaluator = val_evaluator
 
 # ================== training ========================
-lr = 1.0e-5*total_batch_size
+lr = 1.25e-5*total_batch_size # 6e-4 for 8 gpus, bs=6
 optim_wrapper = dict(
     type="OptimWrapper",
     optimizer=dict(type="AdamW", lr=lr, weight_decay=0.001),
