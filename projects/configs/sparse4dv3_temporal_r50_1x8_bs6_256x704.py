@@ -62,28 +62,16 @@ dist_params = dict(backend="nccl")
 log_level = "INFO"
 
 batch_size = 6
-num_gpus = 4
+num_gpus = 8
 total_batch_size = batch_size * num_gpus
 input_shape = (704, 256)
 work_dir = f"work_dirs/sparse4dv3_temporal_r50_1x{num_gpus}_bs{batch_size}_{input_shape[1]}x{input_shape[0]}_mmlabv2"
-num_iters_per_epoch = int(28130 // (num_gpus * batch_size))
 num_epochs = 100
 checkpoint_epoch_interval = 20
 
-checkpoint_config = dict(
-    interval=num_iters_per_epoch * checkpoint_epoch_interval
-)
-log_config = dict(
-    interval=1,
-    hooks=[
-        dict(type="TextLoggerHook", by_epoch=False),
-        dict(type="TensorboardLoggerHook"),
-    ],
-)
 load_from = None
+# load_from = "ckpts/sparse4dv3_r50.pth"
 resume_from = None
-workflow = [("train", 1)]
-fp16 = dict(loss_scale=32.0)
 
 tracking_test = True
 tracking_threshold = 0.2
@@ -303,6 +291,10 @@ data_root = "data/nuscenes/"
 anno_root = ""
 train_pkl_path = anno_root + "nuscenes_sparse4d_mmlabv2_11-06_infos_train.pkl"
 val_pkl_path = anno_root + "nuscenes_sparse4d_mmlabv2_11-06_infos_val.pkl"
+# train_pkl_path = anno_root + "nuscenes_sparse4d_mmlabv2_11-18_mini_infos_val.pkl"
+# val_pkl_path = anno_root + "nuscenes_sparse4d_mmlabv2_11-18_mini_infos_val.pkl"
+# train_pkl_path = anno_root + "nusc-mini-np1-mmv2_infos_val.pkl"
+# val_pkl_path = anno_root + "nusc-mini-np1-mmv2_infos_val.pkl"
 backend_args = None
 
 img_norm_cfg = dict(
@@ -460,6 +452,7 @@ test_evaluator = val_evaluator
 lr = 1.25e-5*total_batch_size # 6e-4 for 8 gpus, bs=6
 optim_wrapper = dict(
     type="OptimWrapper",
+    # type="AmpOptimWrapper", # TODO does not work with Sparse4D upgrade yet
     optimizer=dict(type="AdamW", lr=lr, weight_decay=0.001),
     clip_grad=dict(max_norm=25, norm_type=2),
     paramwise_cfg=dict(

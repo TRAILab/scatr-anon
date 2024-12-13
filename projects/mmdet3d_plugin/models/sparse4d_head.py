@@ -1,7 +1,6 @@
 # Copyright (c) Horizon Robotics. All rights reserved.
 from typing import List, Optional, Union
 
-import numpy as np
 import torch
 import torch.nn as nn
 from mmdet3d.registry import MODELS
@@ -173,8 +172,6 @@ class Sparse4DHead(BaseModule):
         (
             instance_feature,
             anchor,
-            temp_instance_feature,
-            temp_anchor,
             time_interval,
         ) = self.instance_bank.get(
             batch_size,
@@ -236,10 +233,6 @@ class Sparse4DHead(BaseModule):
             attn_mask[num_free_instance:, num_free_instance:] = dn_attn_mask
 
         anchor_embed = self.anchor_encoder(anchor)
-        if temp_anchor is not None:
-            temp_anchor_embed = self.anchor_encoder(temp_anchor)
-        else:
-            temp_anchor_embed = None
 
         # =================== forward the layers ====================
         prediction = []
@@ -249,16 +242,15 @@ class Sparse4DHead(BaseModule):
             if self.layers[i] is None:
                 continue
             elif op == "temp_gnn":
+                # attend to learnable instances (300) + temp instances (600) or in first frame case only learnable instances (900)
+                # in temp_gnn, do not attend to dn instances
                 instance_feature = self.graph_model(
                     i,
                     instance_feature,
-                    temp_instance_feature,
-                    temp_instance_feature,
+                    instance_feature[:, :self.instance_bank.num_anchor],
+                    instance_feature[:, :self.instance_bank.num_anchor],
                     query_pos=anchor_embed,
-                    key_pos=temp_anchor_embed,
-                    attn_mask=attn_mask
-                    if temp_instance_feature is None
-                    else None,
+                    key_pos=anchor_embed[:, :self.instance_bank.num_anchor],
                 )
             elif op == "gnn":
                 instance_feature = self.graph_model(
@@ -321,14 +313,8 @@ class Sparse4DHead(BaseModule):
                             self.instance_bank.mask,
                         )
                 if i != len(self.operation_order) - 1:
+                    # update anchor_embed for the next transformer block based on output of the refinement layer
                     anchor_embed = self.anchor_encoder(anchor)
-                if (
-                    len(prediction) > self.num_single_frame_decoder
-                    and temp_anchor_embed is not None
-                ):
-                    temp_anchor_embed = anchor_embed[
-                        :, : self.instance_bank.num_temp_instances
-                    ]
             else:
                 raise NotImplementedError(f"{op} is not supported.")
 

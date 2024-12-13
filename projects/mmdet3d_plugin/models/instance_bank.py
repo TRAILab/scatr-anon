@@ -98,6 +98,7 @@ class InstanceBank(nn.Module):
             self.mask = torch.abs(time_interval) <= self.max_time_interval
 
             if self.anchor_handler is not None:
+                # update all anchors regardless of new sequence
                 T_temp2cur = torch.stack(
                     [
                         x @ self.history_T_global[i]
@@ -124,6 +125,7 @@ class InstanceBank(nn.Module):
                 dn_metas["dn_anchor"] = dn_anchor.reshape(
                     batch_size, num_dn_group, num_dn, -1
                 )
+                # sampler.update_dn handles new sequence case by using instance_bank.mask
             time_interval = torch.where(
                 torch.logical_and(time_interval != 0, self.mask),
                 time_interval,
@@ -138,8 +140,6 @@ class InstanceBank(nn.Module):
         return (
             instance_feature,
             anchor,
-            self.cached_feature,
-            self.cached_anchor,
             time_interval,
         )
 
