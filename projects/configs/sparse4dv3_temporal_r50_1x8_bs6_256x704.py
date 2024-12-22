@@ -10,9 +10,9 @@ batch_size = 6
 num_gpus = 8
 total_batch_size = batch_size * num_gpus
 input_shape = (704, 256)
-work_dir = f"work_dirs/sparse4dv3_temporal_r50_1x{num_gpus}_bs{batch_size}_{input_shape[1]}x{input_shape[0]}_mmlabv2"
 num_epochs = 100
 checkpoint_epoch_interval = 20
+work_dir = f"work_dirs/sparse4dv3_temporal_r50_1x{num_gpus}_bs{batch_size}_{input_shape[1]}x{input_shape[0]}-{num_epochs}e_mmlabv2"
 
 load_from = None
 # load_from = "ckpts/sparse4dv3_r50.pth"
