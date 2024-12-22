@@ -186,6 +186,10 @@ class SparseBox3DKeyPointsGenerator(BaseModule):
         temp_timestamps=None,
     ):
         bs, num_anchor = anchor.shape[:2]
+        # to support AMP training, clamp anchor to avoid overflow
+        anchor = anchor.clamp(max=5) # exp(5) = 148, assume no object is larger than 148m
+        # TODO look into alternative, like
+        # with torch.cuda.amp.autocast(enabled=False):
         size = anchor[..., None, [W, L, H]].exp()
         key_points = self.fix_scale * size
         if self.num_learnable_pts > 0 and instance_feature is not None:
