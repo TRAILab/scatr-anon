@@ -280,7 +280,7 @@ model = dict(
             loss_yawness=dict(type="mmdet.GaussianFocalLoss"),
             cls_allow_reverse=[class_names.index("barrier")],
         ),
-        decoder=dict(type="SparseBox3DDecoder"),
+        decoder=dict(type="SparseBox3DDecoder", score_threshold=tracking_threshold),
         reg_weights=[2.0] * 3 + [1.0] * 7,
     ),
 )
@@ -414,8 +414,6 @@ train_dataloader = dict(
         test_mode=False,
         # we should still be able to train on empty GT, and breaks stream training
         filter_empty_gt=False,
-        # tracking=tracking_test,
-        # tracking_threshold=tracking_threshold
     )
 )
 
@@ -432,8 +430,6 @@ val_dataloader = dict(
         pipeline=test_pipeline,
         data_aug_conf=data_aug_conf,
         test_mode=True,
-        # tracking=tracking_test,
-        # tracking_threshold=tracking_threshold
     )
 )
 test_dataloader = val_dataloader
@@ -454,7 +450,7 @@ optim_wrapper = dict(
     type="OptimWrapper",
     # type="AmpOptimWrapper", # TODO does not work with Sparse4D upgrade yet
     optimizer=dict(type="AdamW", lr=lr, weight_decay=0.001),
-    clip_grad=dict(max_norm=25, norm_type=2),
+    clip_grad=dict(max_norm=25, norm_type=2, error_if_nonfinite=True),
     paramwise_cfg=dict(
         custom_keys={
             "img_backbone": dict(lr_mult=0.5),
@@ -482,8 +478,8 @@ train_cfg = dict(
     by_epoch=True,
     max_epochs=num_epochs,
     val_interval=checkpoint_epoch_interval)
-val_cfg = dict(type='ValLoop')
-test_cfg = dict(type='TestLoop')
+val_cfg = dict()
+test_cfg = dict()
 
 default_hooks = dict(
     checkpoint=dict(by_epoch=True,
