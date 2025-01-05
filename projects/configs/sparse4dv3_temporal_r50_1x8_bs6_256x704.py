@@ -1,4 +1,6 @@
-_base_ = ['./_base_/default_runtime.py']
+_base_ = [
+    './_base_/default_runtime.py',
+    './_base_/datasets/nus-3d-track.py']
 
 # ================ base config ===================
 plugin = True
@@ -10,9 +12,9 @@ batch_size = 6
 num_gpus = 8
 total_batch_size = batch_size * num_gpus
 input_shape = (704, 256)
-num_epochs = 100
-checkpoint_epoch_interval = 20
-work_dir = f"work_dirs/sparse4dv3_temporal_r50_1x{num_gpus}_bs{batch_size}_{input_shape[1]}x{input_shape[0]}-{num_epochs}e_mmlabv2"
+num_epochs = 12
+checkpoint_epoch_interval = 1
+work_dir = f"work_dirs/sparse4dv3_temporal_r50_1x{num_gpus}_bs{batch_size}_{input_shape[1]}x{input_shape[0]}-{num_epochs}e_refactored-config"
 
 load_from = None
 # load_from = "ckpts/sparse4dv3_r50.pth"
@@ -20,8 +22,6 @@ resume_from = None
 
 tracking_test = True
 tracking_threshold = 0.2
-
-# ================== model ========================
 class_names = [
     "car",
     "truck",
@@ -34,8 +34,8 @@ class_names = [
     "pedestrian",
     "traffic_cone",
 ]
+# ================== model ========================
 
-num_classes = len(class_names)
 embed_dims = 256
 num_groups = 8
 num_decoder = 6
@@ -181,7 +181,7 @@ model = dict(
         refine_layer=dict(
             type="SparseBox3DRefinementModule",
             embed_dims=embed_dims,
-            num_cls=num_classes,
+            num_cls={{_base_.num_classes}},
             refine_yaw=True,
             with_quality_estimation=with_quality_estimation,
         ),
@@ -225,23 +225,14 @@ model = dict(
             loss_yawness=dict(type="mmdet.GaussianFocalLoss"),
             cls_allow_reverse=[class_names.index("barrier")],
         ),
-        decoder=dict(type="SparseBox3DDecoder", score_threshold=tracking_threshold),
+        decoder=dict(type="SparseBox3DDecoder",
+                     score_threshold=tracking_threshold),
         reg_weights=[2.0] * 3 + [1.0] * 7,
     ),
 )
 
 # ================== data ========================
-dataset_type = "NuScenesTrackingDataset"
-data_root = "data/nuscenes/"
-anno_root = ""
-train_pkl_path = anno_root + "nuscenes_sparse4d_mmlabv2_11-06_infos_train.pkl"
-val_pkl_path = anno_root + "nuscenes_sparse4d_mmlabv2_11-06_infos_val.pkl"
-# train_pkl_path = anno_root + "nuscenes_sparse4d_mmlabv2_11-18_mini_infos_val.pkl"
-# val_pkl_path = anno_root + "nuscenes_sparse4d_mmlabv2_11-18_mini_infos_val.pkl"
-# train_pkl_path = anno_root + "nusc-mini-np1-mmv2_infos_val.pkl"
-# val_pkl_path = anno_root + "nusc-mini-np1-mmv2_infos_val.pkl"
 backend_args = None
-
 img_norm_cfg = dict(
     mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True
 )
@@ -272,7 +263,6 @@ train_pipeline = [
         type="CircleObjectRangeFilter",
         class_dist_thred=[55] * len(class_names),
     ),
-    # dict(type="InstanceNameFilter", classes=class_names),
     dict(
         type="Pack3DTrackInputs",
         keys=[
@@ -289,105 +279,23 @@ train_pipeline = [
                    ],
     ),
 ]
-test_pipeline = [
-    dict(type="LoadMultiViewImageFromFiles", to_float32=True),
-    dict(type="ResizeCropFlipImage"),
-    dict(type="NormalizeMultiviewImage", **img_norm_cfg),
-    dict(
-        type="Pack3DTrackInputs",
-        keys=[
-            "img",
-            "lidar2img",
-            "img_shape",
-        ],
-        meta_keys=["lidar2global", "timestamp", "intrinsics",
-                   "lidar2img", "img_shape", "sample_idx", "scene_token"],
-    ),
-]
-
-input_modality = dict(
-    use_lidar=True,
-    use_camera=True,
-    use_radar=False,
-    use_map=False,
-    use_external=False,
-)
-data_prefix = dict(
-    pts='samples/LIDAR_TOP',
-    CAM_FRONT='samples/CAM_FRONT',
-    CAM_FRONT_LEFT='samples/CAM_FRONT_LEFT',
-    CAM_FRONT_RIGHT='samples/CAM_FRONT_RIGHT',
-    CAM_BACK='samples/CAM_BACK',
-    CAM_BACK_RIGHT='samples/CAM_BACK_RIGHT',
-    CAM_BACK_LEFT='samples/CAM_BACK_LEFT',
-    sweeps='sweeps/LIDAR_TOP')
-
-metainfo = dict(classes=class_names, version='v1.0-trainval')
-
-data_basic_config = dict(
-    type=dataset_type,
-    data_root=data_root,
-    # classes=class_names,
-    modality=input_modality,
-    data_prefix=data_prefix,
-    # version="v1.0-trainval",
-    metainfo=metainfo,
-)
-data_aug_conf = {
-    "resize_lim": (0.40, 0.47),  # (640, 360) - (752, 423)
-    "final_dim": input_shape,  # (704, 256), (W, H)
-    "bot_pct_lim": (0.0, 0.0),  # unused?
-    "rot_lim": (-5.4, 5.4),
-    "W": 1600,
-    "H": 900,
-    "rand_flip": True,
-    "rot3d_range": [-0.3925, 0.3925],
-}
+data_aug_conf = _base_.data_aug_conf
+data_aug_conf.final_dim = input_shape
 
 train_dataloader = dict(
     batch_size=batch_size,
-    num_workers=16,
-    persistent_workers=True,
-    sampler=dict(type='DefaultSampler'),
-    batch_sampler=dict(type='TrackSampler3D', shuffle=True, clip_len=10, seq_flip_prob=0.1),
-    collate_fn=dict(type='default_collate'),
     dataset=dict(
-        **data_basic_config,
-        ann_file=train_pkl_path,
         pipeline=train_pipeline,
-        data_aug_conf=data_aug_conf,
-        test_mode=False,
-        # we should still be able to train on empty GT, and breaks stream training
-        filter_empty_gt=False,
+        data_aug_conf=data_aug_conf
     )
 )
 
 val_dataloader = dict(
     batch_size=batch_size,
-    num_workers=16,
-    persistent_workers=True,
-    sampler=dict(type='DefaultSampler'),
-    batch_sampler=dict(type='TrackSampler3D', shuffle=False, clip_len=-1),
-    collate_fn=dict(type='default_collate'),
-    dataset=dict(
-        **data_basic_config,
-        ann_file=val_pkl_path,
-        pipeline=test_pipeline,
-        data_aug_conf=data_aug_conf,
-        test_mode=True,
-    )
 )
-test_dataloader = val_dataloader
-
-val_evaluator = dict(
-    type='NuScenesTrackingMetric',
-    data_root=data_root,
-    ann_file=data_root+val_pkl_path,
-    metric='bbox',
-    jsonfile_prefix='work_dirs/nuscenes_results/tracking',
-    backend_args=backend_args)
-
-test_evaluator = val_evaluator
+test_dataloader = dict(
+    batch_size=batch_size,
+)
 
 # ================== training ========================
 lr = 1.0e-5*total_batch_size # 6e-4 for 8 gpus, bs=6
@@ -435,6 +343,12 @@ default_hooks = dict(
 vis_backends = [
     dict(type="LocalVisBackend"),
     dict(type="TensorboardVisBackend"),
+    dict(
+        type='WandbVisBackend',
+        init_kwargs=dict(
+            entity="trailab",
+            project="Sparse4Dv3-Lidar"),
+    )
 ]
 visualizer = dict(
     type="Det3DLocalVisualizer", vis_backends=vis_backends, name="visualizer"
@@ -463,4 +377,5 @@ env_cfg = dict(
     dist_cfg=dict(timeout=10800),
 )
 
-randomness=dict(seed=0, deterministic=True) # for debugging purposes, set deterministic=True
+# for debugging purposes, set deterministic=True
+randomness = dict(seed=0, deterministic=True)
