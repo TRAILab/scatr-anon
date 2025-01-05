@@ -29,8 +29,6 @@ class Sparse4DHead(BaseModule):
         loss_reg: dict = None,
         decoder: dict = None,
         sampler: dict = None,
-        gt_cls_key: str = "gt_labels_3d",
-        gt_reg_key: str = "gt_bboxes_3d",
         reg_weights: List = None,
         operation_order: Optional[List[str]] = None,
         cls_threshold_to_reg: float = -1,
@@ -42,8 +40,6 @@ class Sparse4DHead(BaseModule):
         super(Sparse4DHead, self).__init__(init_cfg)
         self.num_decoder = num_decoder
         self.num_single_frame_decoder = num_single_frame_decoder
-        self.gt_cls_key = gt_cls_key
-        self.gt_reg_key = gt_reg_key
         self.cls_threshold_to_reg = cls_threshold_to_reg
         self.dn_loss_weight = dn_loss_weight
         self.decouple_attn = decouple_attn
@@ -390,11 +386,9 @@ class Sparse4DHead(BaseModule):
             output["instance_inds"] = instance_inds
         return output
 
-    def loss(self,
-             model_outs,
-             gt_cls: List[torch.Tensor],
-             gt_reg: List[torch.Tensor],
-             feature_maps=None):
+    def loss(self, model_outs, batch_data_samples):
+        gt_cls = [bs.gt_instances_3d.labels_3d for bs in batch_data_samples]
+        gt_reg = [bs.gt_instances_3d.bboxes_3d for bs in batch_data_samples]
         # ===================== prediction losses ======================
         cls_scores = model_outs["classification"]
         reg_preds = model_outs["prediction"]

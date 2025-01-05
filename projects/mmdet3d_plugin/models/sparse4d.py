@@ -103,13 +103,8 @@ class Sparse4D(MVXTwoStageDetector):
             image_wh=batch_inputs_dict["img_shape"][..., [1, 0]],
             batch_data_samples=batch_data_samples,
         )
-        gt_cls = [bs.gt_instances_3d.labels_3d for bs in batch_data_samples]
-        gt_reg = [bs.gt_instances_3d.bboxes_3d for bs in batch_data_samples]
 
-        output = self.head.loss(
-            model_outs,
-            gt_cls,
-            gt_reg)
+        output = self.head.loss(model_outs, batch_data_samples)
         gt_depth = [
             torch.from_numpy(
                 np.stack([depth.metainfo["gt_depth"][i]
