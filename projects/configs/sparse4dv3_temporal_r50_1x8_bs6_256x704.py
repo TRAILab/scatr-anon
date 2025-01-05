@@ -82,7 +82,7 @@ model = dict(
         num_depth_layers=num_depth_layers,
         loss_weight=0.2,
     ),
-    head=dict(
+    pts_bbox_head=dict(
         type="Sparse4DHead",
         cls_threshold_to_reg=0.05,
         decouple_attn=decouple_attn,
@@ -298,7 +298,7 @@ test_dataloader = dict(
 )
 
 # ================== training ========================
-lr = 1e-5*total_batch_size  # 6e-4 for 8 gpus, bs=6
+lr = 1.0e-5*total_batch_size # 6e-4 for 8 gpus, bs=6
 optim_wrapper = dict(
     type="OptimWrapper",
     # type="AmpOptimWrapper", # TODO does not work with Sparse4D upgrade yet
