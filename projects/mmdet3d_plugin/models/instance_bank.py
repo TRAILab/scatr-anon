@@ -217,22 +217,32 @@ class InstanceBank(nn.Module):
         ) = topk(confidence, self.num_temp_instances, instance_feature, anchor)
 
     def get_instance_ind(self, confidence, anchor=None, threshold=None):
+        # convert class prediction to confidence
         confidence = confidence.max(dim=-1).values.sigmoid()
+        # initialize empty instance_inds
         instance_inds = confidence.new_full(confidence.shape, -1).long()
 
         if (
             self.instance_inds is not None
             and self.instance_inds.shape[0] == instance_inds.shape[0]
         ):
+            # expect both past inds and new inds to have the same shape
+            assert self.instance_inds.shape[1] == instance_inds.shape[1], (
+                self.instance_inds.shape,
+                instance_inds.shape,
+            )
             instance_inds[:, : self.instance_inds.shape[1]] = self.instance_inds
-
+        # for instances with no ID
         mask = instance_inds < 0
+        # for instances with confidence above threshold
         if threshold is not None:
             mask = mask & (confidence >= threshold)
         num_new_instance = mask.sum()
+        # assign them new IDs
         new_ids = torch.arange(num_new_instance).to(instance_inds) + self.prev_id
         instance_inds[torch.where(mask)] = new_ids
         self.prev_id += num_new_instance
+        # 
         if self.num_temp_instances > 0:
             self.update_instance_inds(instance_inds, confidence)
         return instance_inds
@@ -245,10 +255,12 @@ class InstanceBank(nn.Module):
                 temp_conf = confidence
         else:
             temp_conf = self.temp_confidence
+        # take top-k instances with highest confidence
         instance_inds = topk(temp_conf, self.num_temp_instances, instance_inds)[1][
             0
         ]
         instance_inds = instance_inds.squeeze(dim=-1)
+        # pad with -1 on the end
         self.instance_inds = F.pad(
             instance_inds,
             (0, self.num_anchor - self.num_temp_instances),

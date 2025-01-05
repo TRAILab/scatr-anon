@@ -374,6 +374,7 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
             dn_id,
         ]
         output = []
+        # pad the temp_dn_metas to the same length of dn_metas
         for i, (temp_meta, meta) in enumerate(zip(temp_dn_metas, dn_metas)):
             if num_temp_dn < num_dn:
                 pad = (0, num_dn - num_temp_dn)
