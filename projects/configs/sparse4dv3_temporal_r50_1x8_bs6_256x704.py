@@ -1,6 +1,6 @@
 _base_ = [
     './_base_/default_runtime.py',
-    './_base_/datasets/nus-3d-track.py']
+    './_base_/datasets/nus-3d-track-cam.py']
 
 # ================ base config ===================
 plugin = True
