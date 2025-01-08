@@ -1,3 +1,4 @@
+# (TODO) upgrade this script to MMLAB 2.0 libraries
 import numpy as np
 from sklearn.cluster import KMeans
 import mmcv

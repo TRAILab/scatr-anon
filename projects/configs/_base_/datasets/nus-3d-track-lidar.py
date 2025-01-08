@@ -22,23 +22,57 @@ val_pkl_path = anno_root + "nuscenes_sparse4d_mmlabv2_11-06_infos_val.pkl"
 # train_pkl_path = anno_root + "nusc-mini-np1-mmv2_infos_val.pkl"
 # val_pkl_path = anno_root + "nusc-mini-np1-mmv2_infos_val.pkl"
 backend_args = None
-input_shape = (704, 256)
 
-strides = [4, 8, 16, 32]
-num_levels = len(strides)
-num_depth_layers = 3
+point_cloud_range = [-54.0, -54.0, -5.0, 54.0, 54.0, 3.0]
 
-img_norm_cfg = dict(
-    mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True
+points_loader = dict(
+    type="LoadPointsFromFile",
+    coord_type="LIDAR",
+    load_dim=5,
+    use_dim=5,
+    backend_args=backend_args,
 )
+
+db_sampler = dict(
+    type="TrackDBSampler",
+    data_root=data_root,
+    info_path=data_root + 'nuscenes_track_dbinfos_train.pkl',
+    rate=1.0,
+    prepare=dict(
+        # filter_by_difficulty=[], # no difficult in nuscenes
+        filter_by_min_points=dict(
+            car=5,
+            truck=5,
+            bus=5,
+            trailer=5,
+            construction_vehicle=5,
+            traffic_cone=5,
+            barrier=5,
+            motorcycle=5,
+            bicycle=5,
+            pedestrian=5)),
+    classes=class_names,
+    sample_groups=dict(
+        car=2,
+        truck=3,
+        construction_vehicle=7,
+        bus=4,
+        trailer=6,
+        barrier=2,
+        motorcycle=6,
+        bicycle=6,
+        pedestrian=2,
+        traffic_cone=2
+    ),
+    points_loader=points_loader)
+
+
 train_pipeline = [
-    dict(type="LoadMultiViewImageFromFiles", to_float32=True),
+    points_loader,
     dict(
-        type="LoadPointsFromFile",
-        coord_type="LIDAR",
-        load_dim=5,
-        use_dim=5,
-        backend_args=backend_args,
+        type='LoadPointsFromMultiSweeps',
+        sweeps_num=10,
+        use_dim=[0, 1, 2, 3, 4],
     ),
     dict(
         type='TrackLoadAnnotations3D',
@@ -46,54 +80,59 @@ train_pipeline = [
         with_label_3d=True,
         with_attr_label=False,
         with_forecasting=False),
-    dict(type="ResizeCropFlipImage"),
-    dict(
-        type="MultiScaleDepthMapGenerator",
-        downsample=strides[:num_depth_layers],
-    ),
-    dict(type="BBoxRotation"),
-    dict(type="PhotoMetricDistortionMultiViewImage"),
-    dict(type="NormalizeMultiviewImage", **img_norm_cfg),
-    dict(
-        type="CircleObjectRangeFilter",
-        class_dist_thred=[55] * len(class_names),
-    ),
-    # dict(type="InstanceNameFilter", classes=class_names),
+    # augmentations, kwargs in data_aug_conf
+    dict(type='TrackSample', db_sampler=db_sampler),
+    dict(type='SeqGlobalRotScaleTrans'),
+    dict(type='SeqRandomFlip3D', sync_2d=False),
+    dict(type='PointShuffle'),
+    # filter
+    dict(type='PointsRangeFilter', point_cloud_range=point_cloud_range),
+    dict(type='TrackRangeFilter', point_cloud_range=point_cloud_range),
+    dict(type='TrackNameFilter', classes=class_names),
+    # data packing
     dict(
         type="Pack3DTrackInputs",
         keys=[
-            "img",
-            "lidar2img",
-            "img_shape",
+            "points",
             "gt_bboxes_3d",
             "gt_labels_3d",
             "instance_inds"
         ],
-        meta_keys=["lidar2global", "timestamp", "intrinsics",
-                   "lidar2img", "img_shape", "sample_idx", "scene_token",
-                   "gt_depth"  # put depth in meta-keys since it doesn't stack easily into input or gt target structures
-                   ],
-    ),
-]
-test_pipeline = [
-    dict(type="LoadMultiViewImageFromFiles", to_float32=True),
-    dict(type="ResizeCropFlipImage"),
-    dict(type="NormalizeMultiviewImage", **img_norm_cfg),
-    dict(
-        type="Pack3DTrackInputs",
-        keys=[
-            "img",
-            "lidar2img",
-            "img_shape",
-        ],
-        meta_keys=["lidar2global", "timestamp", "intrinsics",
-                   "lidar2img", "img_shape", "sample_idx", "scene_token"],
+        meta_keys=["lidar2global", "timestamp",
+                   "sample_idx", "scene_token",],
     ),
 ]
 
+test_pipeline = [
+    points_loader,
+    dict(
+        type='LoadPointsFromMultiSweeps',
+        sweeps_num=10,
+        use_dim=[0, 1, 2, 3, 4],
+    ),
+    dict(
+        type="Pack3DTrackInputs",
+        keys=["points"],
+        meta_keys=["lidar2global", "timestamp",
+                   "sample_idx", "scene_token"],
+    ),
+]
+
+
+# aug params from FocalFormer3D
+data_aug_conf = dict(
+    # lidar aug params
+    rot_range_lidar=[-0.3925 * 2, 0.3925 * 2],
+    scale_ratio_range_lidar=[0.9, 1.1],
+    translation_std_lidar=[0.5, 0.5, 0.5],
+    flip_ratio_bev_horizontal=0.5,
+    flip_ratio_bev_vertical=0.5,
+    use_track_sample_3d=True,
+)
+
 input_modality = dict(
     use_lidar=True,
-    use_camera=True,
+    use_camera=False,
     use_radar=False,
     use_map=False,
     use_external=False,
@@ -113,33 +152,10 @@ metainfo = dict(classes=class_names, version='v1.0-trainval')
 data_basic_config = dict(
     type=dataset_type,
     data_root=data_root,
-    # classes=class_names,
     modality=input_modality,
     data_prefix=data_prefix,
-    # version="v1.0-trainval",
     metainfo=metainfo,
 )
-data_aug_conf = {
-    "resize_lim": (0.40, 0.47),  # (640, 360) - (752, 423)
-    "final_dim": input_shape,  # (704, 256), (W, H)
-    "bot_pct_lim": (0.0, 0.0),  # unused?
-    "rot_lim": (-5.4, 5.4),
-    "W": 1600,
-    "H": 900,
-    "rand_flip": True,
-    "rot3d_range": [-0.3925, 0.3925],
-}
-
-# data_aug_conf = {
-#     "resize_lim": (0.435, 0.435),
-#     "final_dim": input_shape,
-#     "bot_pct_lim": (0.0, 0.0),
-#     "rot_lim": (0, 0),
-#     "W": 1600,
-#     "H": 900,
-#     "rand_flip": False,
-#     "rot3d_range": [0, 0],
-# }
 
 batch_size = 2
 
@@ -149,7 +165,7 @@ train_dataloader = dict(
     sampler=dict(type='DefaultSampler'),
     batch_sampler=dict(type='TrackSampler3D', shuffle=True,
                        clip_len=10, seq_flip_prob=0.1, use_CBGS=False),
-    collate_fn=dict(type='default_collate'),
+    # collate_fn=dict(type='default_collate'),
     dataset=dict(
         **data_basic_config,
         ann_file=train_pkl_path,
@@ -167,12 +183,11 @@ val_dataloader = dict(
     persistent_workers=True,
     sampler=dict(type='DefaultSampler'),
     batch_sampler=dict(type='TrackSampler3D', shuffle=False, clip_len=-1),
-    collate_fn=dict(type='default_collate'),
+    # collate_fn=dict(type='default_collate'),
     dataset=dict(
         **data_basic_config,
         ann_file=val_pkl_path,
         pipeline=test_pipeline,
-        data_aug_conf=data_aug_conf,
         test_mode=True,
     )
 )

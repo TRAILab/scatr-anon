@@ -3,6 +3,7 @@ from .nuscenes_forecasting_bbox import NuScenesForecastingBox
 from .nuscenes_tracking_dataset import NuScenesTrackingDataset
 from .pipelines import *
 from .samplers import *
+from .transforms import *
 
 __all__ = [
     'NuScenes3DDetTrackDataset',

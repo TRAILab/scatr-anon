@@ -11,7 +11,6 @@ from .augment import (
     PhotoMetricDistortionMultiViewImage,
 )
 from .loading import TrackLoadAnnotations3D
-from .track_transform_3d import TrackSample
 from .formatting import Pack3DTrackInputs
 
 __all__ = [
@@ -24,6 +23,5 @@ __all__ = [
     "PhotoMetricDistortionMultiViewImage",
     "NuScenesSparse4DAdaptor",
     "TrackLoadAnnotations3D",
-    "TrackSample",
     "Pack3DTrackInputs",
 ]

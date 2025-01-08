@@ -11,6 +11,7 @@ from tools.dataset_converters import nuscenes_converter as nuscenes_converter
 from tools.dataset_converters import semantickitti_converter
 from tools.dataset_converters.create_gt_database import (
     GTDatabaseCreater, create_groundtruth_database)
+from tools.dataset_converters.create_gt_track_database import create_groundtruth_track_database
 from tools.dataset_converters.update_infos_to_v2 import update_pkl_infos
 
 
@@ -87,6 +88,9 @@ def nuscenes_data_prep(root_path,
     update_pkl_infos('nuscenes', out_dir=out_dir, pkl_path=info_val_path)
     create_groundtruth_database(dataset_name, root_path, info_prefix,
                                 f'{info_prefix}_infos_train.pkl')
+    create_groundtruth_track_database(
+        "NuScenesTrackingDataset", root_path, info_prefix, f'{info_prefix}_infos_train.pkl')
+
 
 
 def lyft_data_prep(root_path, info_prefix, version, max_sweeps=10):
@@ -337,9 +341,12 @@ if __name__ == '__main__':
                 with_plane=args.with_plane)
     elif args.dataset == 'nuscenes' and args.version != 'v1.0-mini':
         if args.only_gt_database:
-            create_groundtruth_database('NuScenesDataset', args.root_path,
-                                        args.extra_tag,
-                                        f'{args.extra_tag}_infos_train.pkl')
+            create_groundtruth_database(
+                'NuScenesDataset', args.root_path,
+                args.extra_tag, f'{args.extra_tag}_infos_train.pkl')
+            create_groundtruth_track_database(
+                'NuScenesTrackingDataset', args.root_path,
+                args.extra_tag, f'{args.extra_tag}_infos_train.pkl')
         else:
             train_version = f'{args.version}-trainval'
             nuscenes_data_prep(
@@ -359,9 +366,12 @@ if __name__ == '__main__':
                 max_sweeps=args.max_sweeps)
     elif args.dataset == 'nuscenes' and args.version == 'v1.0-mini':
         if args.only_gt_database:
-            create_groundtruth_database('NuScenesDataset', args.root_path,
-                                        args.extra_tag,
-                                        f'{args.extra_tag}_infos_train.pkl')
+            create_groundtruth_database(
+                'NuScenesDataset', args.root_path,
+                args.extra_tag, f'{args.extra_tag}_infos_train.pkl')
+            create_groundtruth_track_database(
+                'NuScenesTrackingDataset', args.root_path,
+                args.extra_tag, f'{args.extra_tag}_infos_train.pkl')
         else:
             train_version = f'{args.version}'
             nuscenes_data_prep(

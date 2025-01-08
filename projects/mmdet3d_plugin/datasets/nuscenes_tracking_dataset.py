@@ -16,7 +16,7 @@ from mmdet3d.datasets import NuScenesDataset
 from mmdet3d.registry import DATASETS
 from mmengine.logging import print_log
 
-from projects.mmdet3d_plugin.datasets.pipelines import TrackSample
+from projects.mmdet3d_plugin.datasets.transforms import TrackSample
 
 
 @DATASETS.register_module()
@@ -41,13 +41,14 @@ class NuScenesTrackingDataset(NuScenesDataset):
         super().__init__(*args, **kwargs)
 
         # resize params, using width, height convention
-        W, H = self.data_aug_conf.pop("W"), self.data_aug_conf.pop("H")
-        self.ori_dim = (W, H)
-        fW, fH = self.data_aug_conf.pop("final_dim")
-        self.final_dim = (fW, fH)
-        self.resize = max(fW/W, fH/H)
-        self.resize_dims = (int(W * self.resize), int(H * self.resize))
-        self.bot_pct_lim = self.data_aug_conf.pop("bot_pct_lim") # set to (0,0) by Sparse4D, doesn't matter?
+        if self.modality['use_camera']:
+            W, H = self.data_aug_conf.pop("W"), self.data_aug_conf.pop("H")
+            self.ori_dim = (W, H)
+            fW, fH = self.data_aug_conf.pop("final_dim")
+            self.final_dim = (fW, fH)
+            self.resize = max(fW/W, fH/H)
+            self.resize_dims = (int(W * self.resize), int(H * self.resize))
+            self.bot_pct_lim = self.data_aug_conf.pop("bot_pct_lim") # set to (0,0) by Sparse4D, doesn't matter?
 
         if self.test_mode and self.data_aug_conf != {}:
             print_log(
@@ -62,73 +63,78 @@ class NuScenesTrackingDataset(NuScenesDataset):
     def get_augmentation(self, clip_inds: List[int]):
         """
         Imported from Sparse4Dv3
+        (TODO) move the generation of aug parameters into a method from the transform.
+        Figure out some way to avoid hard coding the transform keys for error robustness
         """
         aug_config = {}
         # Img Augs
-        # Resize
-        if not self.test_mode: # training, random resize
-            resize = np.random.uniform(*self.data_aug_conf["resize_lim"])
-        else:  # fixed resize
-            resize = self.resize
-        aug_config["resize"] = resize
-        W, H = self.ori_dim
-        newW, newH = (int(W*resize), int(H*resize))
-        aug_config["resize_dims"] = (newW, newH)
-        # crop
-        fW, fH = self.final_dim
-        if not self.test_mode: # training, random crop
-            crop_h = (
-                int(
-                    (1 - np.random.uniform(*self.bot_pct_lim))
-                    * newH
+        if self.modality['use_camera']:
+            # Resize
+            if not self.test_mode: # training, random resize
+                resize = np.random.uniform(*self.data_aug_conf["resize_lim"])
+            else:  # fixed resize
+                resize = self.resize
+            aug_config["resize"] = resize
+            W, H = self.ori_dim
+            newW, newH = (int(W*resize), int(H*resize))
+            aug_config["resize_dims"] = (newW, newH)
+            # crop
+            fW, fH = self.final_dim
+            if not self.test_mode: # training, random crop
+                crop_h = (
+                    int(
+                        (1 - np.random.uniform(*self.bot_pct_lim))
+                        * newH
+                    )
+                    - fH
                 )
-                - fH
-            )
-            crop_w = int(np.random.uniform(0, max(0, newW - fW)))
-        else:
-            crop_h = (
-                int((1 - np.mean(self.bot_pct_lim)) * newH)
-                - fH
-            )
-            crop_w = int(max(0, newW - fW) / 2)
-        aug_config["crop"] = (crop_w, crop_h, crop_w+fW, crop_h+fH)
-        # Flip
-        aug_config["flip"] = np.random.choice([True, False]) and self.data_aug_conf.get(
-            "rand_flip", False)
-        # Rotate
-        aug_config["rotate"] = np.random.uniform(
-            *self.data_aug_conf.get("rot_lim", (0, 0)))
-        # Rotate 3D
-        aug_config["rotate_3d"] = np.random.uniform(
-            *self.data_aug_conf.get("rot3d_range", (0, 0)))
-        # # (TODO) LiDAR Augs
-        # # BEVFusionRandomFlip3D
-        # aug_config["flip_horizontal_3d"] = self.data_aug_conf.get(
-        #     "random_flip_3d_horiz", False) and np.random.choice([0, 1])
-        # aug_config["flip_vertical_3d"] = self.data_aug_conf.get(
-        #     "random_flip_3d_vert", False) and np.random.choice([0, 1])
-        # # BEVFusionGlobalRotScaleTrans
-        # aug_config["rotation_3d"] = np.random.uniform(
-        #     *self.data_aug_conf.get("rotation_3d_range", [0, 0]))
-        # aug_config["translation_3d"] = np.random.normal(
-        #     *self.data_aug_conf.get("translation_3d_range", [0, 0]), size=3).T
-        # aug_config["scale_3d"] = np.random.uniform(
-        #     *self.data_aug_conf.get("scale_3d_range", [1, 1]))
+                crop_w = int(np.random.uniform(0, max(0, newW - fW)))
+            else:
+                crop_h = (
+                    int((1 - np.mean(self.bot_pct_lim)) * newH)
+                    - fH
+                )
+                crop_w = int(max(0, newW - fW) / 2)
+            aug_config["crop"] = (crop_w, crop_h, crop_w+fW, crop_h+fH)
+            # Flip
+            aug_config["flip"] = np.random.choice([True, False]) and self.data_aug_conf.get(
+                "rand_flip", False)
+            # Rotate
+            aug_config["rotate"] = np.random.uniform(
+                *self.data_aug_conf.get("rot_lim", (0, 0)))
+            # Rotate 3D
+            aug_config["rotate_3d"] = np.random.uniform(
+                *self.data_aug_conf.get("rot3d_range", (0, 0)))
+
+        # LiDAR Augs
+        if self.modality['use_lidar']:
+            # SeqRandomFlip3D
+            aug_config["pcd_horizontal_flip"] = np.random.rand() < self.data_aug_conf.get(
+                "flip_ratio_bev_horizontal", 0)
+            aug_config["pcd_vertical_flip"] = np.random.rand() < self.data_aug_conf.get(
+                "flip_ratio_bev_vertical", 0)
+            # SeqGlobalRotScaleTrans
+            aug_config["noise_rotation_lidar"] = np.random.uniform(
+                *self.data_aug_conf.get("rot_range_lidar", [0, 0]))
+            aug_config["pcd_scale_factor"] = np.random.uniform(
+                *self.data_aug_conf.get("scale_ratio_range_lidar", [1, 1]))
+            aug_config["trans_factor_lidar"] = np.random.normal(
+                self.data_aug_conf.get("translation_std_lidar", [0, 0, 0]), size=(3,)).T
 
         # apply the same augmentation to all samples in the clip
         aug_config_list = [copy.deepcopy(aug_config)
                            for _ in range(len(clip_inds))]
-        # # TrackDBSampler
-        # if self.data_aug_conf.get("use_track_sample_3d", False):
-        #     assert any([isinstance(tf, TrackSample) for tf in self.pipeline.transforms]), \
-        #         "track sample 3d is set to true in the data_aug_conf of NuScenesTrackingDataset but the pipeline does not contain TrackSampler3D"
-        #     track_db_sampler = (tf.db_sampler for tf in self.pipeline.transforms if isinstance(
-        #         tf, TrackSample)).__next__()
-        #     scene_token = self.get_scene_token(clip_inds[0])
-        #     track_sample_dict_list = track_db_sampler.get_samples(
-        #         [self.cls_distr[i] for i in clip_inds], scene_token)
-        #     for track_sample_dict_i, aug_conf in zip(track_sample_dict_list, aug_config_list):
-        #         aug_conf["sampled_dict"] = track_sample_dict_i
+        # TrackDBSampler
+        if self.data_aug_conf.get("use_track_sample_3d", False):
+            assert any([isinstance(tf, TrackSample) for tf in self.pipeline.transforms]), \
+                "track sample 3d is set to true in the data_aug_conf of NuScenesTrackingDataset but the pipeline does not contain TrackSampler3D"
+            track_db_sampler = (tf.db_sampler for tf in self.pipeline.transforms if isinstance(
+                tf, TrackSample)).__next__()
+            scene_token = self.get_scene_token(clip_inds[0])
+            track_sample_dict_list = track_db_sampler.get_samples(
+                [self.cls_distr[i] for i in clip_inds], scene_token)
+            for track_sample_dict_i, aug_conf in zip(track_sample_dict_list, aug_config_list):
+                aug_conf["sampled_dict"] = track_sample_dict_i
         return aug_config_list
 
     def prepare_data(self, index) -> Union[dict, None]:
