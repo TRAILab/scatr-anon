@@ -17,6 +17,8 @@ try:
 except:
     DAF_VALID = False
 
+from ..utils.misc import hash_tensor, hash_array
+
 __all__ = ["Sparse4D"]
 
 
@@ -27,6 +29,7 @@ class Sparse4D(MVXTwoStageDetector):
         use_grid_mask: bool = True,
         use_deformable_func: bool = False,
         depth_branch: Optional[Dict]=None,
+        freeze_pts: bool = True,
         **kwargs
     ):
         super(Sparse4D, self).__init__(**kwargs)
@@ -43,9 +46,17 @@ class Sparse4D(MVXTwoStageDetector):
                 True, True, offset=False, ratio=0.5, mode=1, prob=0.7
             )
 
-    def extract_img_feat(self, img: Optional[Tensor], return_depth: bool = False, focal=None):
+        if freeze_pts:
+            self.pts_backbone.eval()
+            for param in self.pts_backbone.parameters():
+                param.requires_grad = False
+
+    def extract_img_feat(self, img: Optional[Tensor], return_depth: bool = False, batch_input_metas = None):
         if img is None:
             return None, None
+        focal = torch.tensor([
+            [intr[0, 0] for intr in bs["intrinsics"]]
+            for bs in batch_input_metas], device=img.device)
         bs = img.shape[0]
         if img.dim() == 5:  # multi-view
             num_cams = img.shape[1]
@@ -75,30 +86,28 @@ class Sparse4D(MVXTwoStageDetector):
         return feature_maps, depths
 
     def extract_feat(self, batch_inputs_dict: Dict, batch_input_metas: List[Dict]):
+        # img feature extraction
         batch_img = batch_inputs_dict.get("img", None)
-        batch_focal = torch.tensor([
-            [intr[0, 0] for intr in bs["intrinsics"]]
-            for bs in batch_input_metas], device=batch_img.device)
         feature_maps, depths = self.extract_img_feat(
             batch_img,
             return_depth=self.training,
-            focal=batch_focal)
-        pts_feats = None # TODO implement extract_pts_feat
-        # pts_feats = self.extract_pts_feat(
-        #     batch_inputs_dict.get('voxels', None),
-        #     batch_input_metas=batch_input_metas,
-        # )
+            batch_input_metas=batch_input_metas,)
+
+        # pts feature extraction
+        pts_feats = self.extract_pts_feat(
+            batch_inputs_dict.get('voxels', None),
+            batch_input_metas=batch_input_metas,
+        )
 
         if feature_maps is None:
             feature_maps = [None]
         if pts_feats is None:
             pts_feats = [None]
-
-        new_img_feat = feature_maps # TODO implement pts_fusion_layer
-        new_pts_feat = pts_feats
+        
+        # breakpoint() # check output of new_pts_feat against focalformer
         # new_img_feat, new_pts_feat = self.pts_fusion_layer(
             # feature_maps[0], pts_feats[0], batch_input_metas)
-        return new_img_feat, depths, new_pts_feat
+        return feature_maps, depths, new_pts_feat
 
     def loss(self, batch_inputs_dict: Dict,
              batch_data_samples: List[Det3DDataSample],

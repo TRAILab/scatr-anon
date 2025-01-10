@@ -5,6 +5,7 @@ from .detection3d import (SparseBox3DDecoder, SparseBox3DEncoder,
 from .instance_bank import InstanceBank
 from .sparse4d import Sparse4D
 from .sparse4d_head import Sparse4DHead
+from .necks import FocalEncoder
 
 __all__ = [
     "Sparse4D",
@@ -18,4 +19,5 @@ __all__ = [
     "SparseBox3DRefinementModule",
     "SparseBox3DKeyPointsGenerator",
     "SparseBox3DEncoder",
+    "FocalEncoder",
 ]

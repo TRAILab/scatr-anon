@@ -1,7 +1,7 @@
 _base_ = [
     './_base_/default_runtime.py',
     './_base_/datasets/nus-3d-track-lidar.py',
-    './_base_/models/sparse4dv3_temporal_r50.py',]
+    './_base_/models/sparse4dv3_temporal_SECOND.py',]
 
 # ================ base config ===================
 plugin = True
@@ -16,8 +16,7 @@ input_shape = (704, 256)
 num_epochs = 12
 checkpoint_epoch_interval = 1
 work_dir = f"work_dirs/sparse4dv3-temporal_lidar_1x{num_gpus}_bs{batch_size}_{input_shape[1]}x{input_shape[0]}-{num_epochs}e"
-load_from = None
-# load_from = "ckpts/sparse4dv3_r50.pth"
+load_from = './work_dirs/DeformFormer3D_L/epoch_20.pth'
 resume_from = None
 
 tracking_test = True
@@ -33,6 +32,9 @@ class_names = [
     "pedestrian",
     "traffic_cone",
 ]
+
+point_cloud_range = [-54.0, -54.0, -5.0, 54.0, 54.0, 3.0]
+
 # ================== model ========================
 
 strides = [4, 8, 16, 32]
@@ -40,8 +42,11 @@ num_levels = len(strides)
 num_depth_layers = 3
 
 model = dict(
-    img_neck=dict(num_outs=num_levels),
-    depth_branch=dict(num_depth_layers=num_depth_layers),
+    data_preprocessor=dict(
+        voxel_layer=dict(
+            point_cloud_range=point_cloud_range,
+        )
+    ),
     pts_bbox_head=dict(
         deformable_model=dict(
             num_levels=num_levels
