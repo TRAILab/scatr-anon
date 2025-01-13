@@ -17,7 +17,7 @@ try:
 except:
     DAF_VALID = False
 
-from ..utils.misc import hash_tensor, hash_array
+from projects.mmdet3d_plugin.utils.misc import hash_tensor, hash_array  # debug tools
 
 __all__ = ["Sparse4D"]
 
@@ -28,7 +28,7 @@ class Sparse4D(MVXTwoStageDetector):
         self,
         use_grid_mask: bool = True,
         use_deformable_func: bool = False,
-        depth_branch: Optional[Dict]=None,
+        depth_branch: Optional[Dict] = None,
         freeze_pts: bool = True,
         **kwargs
     ):
@@ -51,7 +51,7 @@ class Sparse4D(MVXTwoStageDetector):
             for param in self.pts_backbone.parameters():
                 param.requires_grad = False
 
-    def extract_img_feat(self, img: Optional[Tensor], return_depth: bool = False, batch_input_metas = None):
+    def extract_img_feat(self, img: Optional[Tensor], return_depth: bool = False, batch_input_metas=None):
         if img is None:
             return None, None
         focal = torch.tensor([
@@ -98,16 +98,21 @@ class Sparse4D(MVXTwoStageDetector):
             batch_inputs_dict.get('voxels', None),
             batch_input_metas=batch_input_metas,
         )
-
+        # hash_tensor(pts_feats[0]) = 47c0c66f09f334cc63bff52660e5dcc05236722a with no spconv
+        # 0ea90631caf8286115d6cfb827a21017b09398f6 with SPCONV
         if feature_maps is None:
             feature_maps = [None]
         if pts_feats is None:
             pts_feats = [None]
-        
-        # breakpoint() # check output of new_pts_feat against focalformer
-        # new_img_feat, new_pts_feat = self.pts_fusion_layer(
-            # feature_maps[0], pts_feats[0], batch_input_metas)
-        return feature_maps, depths, new_pts_feat
+
+        breakpoint()  # check output of new_pts_feat against focalformer
+        if self.with_fusion:
+            new_img_feat, new_pts_feat = self.pts_fusion_layer(
+                feature_maps[0], pts_feats[0], batch_input_metas)
+            # new_img_feat is not actually used in focalformer head
+            return feature_maps, depths, new_pts_feat
+        else:  # just return the normal features
+            return feature_maps, depths, pts_feats
 
     def loss(self, batch_inputs_dict: Dict,
              batch_data_samples: List[Det3DDataSample],
@@ -151,7 +156,6 @@ class Sparse4D(MVXTwoStageDetector):
         # extract features
         new_img_feat, depths, new_pts_feat = self.extract_feat(
             batch_inputs_dict, batch_input_metas)
-
         # timestamp needs to be type double to avoid quantization errors
         timestamp = torch.tensor([bs.metainfo["timestamp"]
                                  for bs in batch_data_samples], dtype=torch.float64)
