@@ -14,7 +14,8 @@ total_batch_size = batch_size * num_gpus
 input_shape = (704, 256)
 num_epochs = 12
 checkpoint_epoch_interval = 1
-work_dir = f"work_dirs/sparse4dv3_temporal_r50_1x{num_gpus}_bs{batch_size}_{input_shape[1]}x{input_shape[0]}-{num_epochs}e_refactored-config"
+short_name = "baseline"
+work_dir = f"work_dirs/sparse4dv3_temporal_r50_1x{num_gpus}_bs{batch_size}_{input_shape[1]}x{input_shape[0]}-{num_epochs}e_{short_name}"
 
 load_from = None
 # load_from = "ckpts/sparse4dv3_r50.pth"
@@ -117,7 +118,7 @@ model = dict(
             ]
             * num_single_frame_decoder
             + [
-                "temp_gnn",
+                "temp_gnn", # turn off if no temporal
                 "gnn",
                 "norm",
                 "deformable",
@@ -133,9 +134,7 @@ model = dict(
             num_heads=num_groups,
             batch_first=True,
             dropout=drop_out,
-        )
-        if temporal
-        else None,
+        ),
         graph_model=dict(
             type="MultiheadAttention",
             embed_dims=embed_dims if not decouple_attn else embed_dims * 2,
@@ -347,7 +346,8 @@ vis_backends = [
         type='WandbVisBackend',
         init_kwargs=dict(
             entity="trailab",
-            project="Sparse4Dv3-Lidar"),
+            project="Sparse4Dv3-Lidar",
+            name=short_name),
     )
 ]
 visualizer = dict(
