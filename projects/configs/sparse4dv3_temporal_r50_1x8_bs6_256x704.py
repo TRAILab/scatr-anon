@@ -15,7 +15,8 @@ total_batch_size = batch_size * num_gpus
 input_shape = (704, 256)
 num_epochs = 12
 checkpoint_epoch_interval = 1
-work_dir = f"work_dirs/sparse4dv3_temporal_r50_1x{num_gpus}_bs{batch_size}_{input_shape[1]}x{input_shape[0]}-{num_epochs}e_refactored-config"
+short_name = "lidar-refactor"
+work_dir = f"work_dirs/sparse4dv3_temporal_r50_1x{num_gpus}_bs{batch_size}_{input_shape[1]}x{input_shape[0]}-{num_epochs}e_{short_name}"
 
 load_from = None
 # load_from = "ckpts/sparse4dv3_r50.pth"
@@ -188,7 +189,8 @@ vis_backends = [
         type='WandbVisBackend',
         init_kwargs=dict(
             entity="trailab",
-            project="Sparse4Dv3-Lidar"),
+            project="Sparse4Dv3-Lidar",
+            name=short_name,),
     )
 ]
 visualizer = dict(
