@@ -10,7 +10,8 @@ ENV TORCH_USE_CUDA_DSA=1
 ENV TORCH_NVCC_FLAGS="-Xfatbin -compress-all"
 ENV CMAKE_PREFIX_PATH="$(dirname $(which conda))/../"
 ENV DEBIAN_FRONTEND=noninteractive
-
+ENV MMCV_WITH_OPS=1
+ENV FORCE_CUDA=1
 # Avoid Public GPG key error
 # https://github.com/NVIDIA/nvidia-docker/issues/1631
 # RUN rm /etc/apt/sources.list.d/cuda.list \
