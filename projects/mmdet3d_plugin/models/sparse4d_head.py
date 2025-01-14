@@ -29,9 +29,9 @@ class Sparse4DHead(BaseModule):
         deformable_model: dict,
         refine_layer: dict,
         point_cloud_range: List[float],
-        modality:str="camera",
-        multistage_heatmap: Union[int, bool]=False,
-        bevpos:bool = True,
+        modality: str = "camera",
+        multistage_heatmap: Union[int, bool] = False,
+        bevpos: bool = True,
         num_decoder: int = 6,
         num_single_frame_decoder: int = -1,
         temp_graph_model: Optional[Dict] = None,
@@ -114,10 +114,14 @@ class Sparse4DHead(BaseModule):
         self.use_camera = modality == "camera"
         self.multistage_heatmap = multistage_heatmap
         if self.use_lidar:
-            self.pos_embed_learned = MLP(128 * 5, self.embed_dims, self.embed_dims, 2)
+            self.pos_embed_learned = MLP(
+                128 * 5, self.embed_dims, self.embed_dims, 2)
             # X-min, Y-min, Z-min, X-max, Y-max, Z-max
-            self.point_cloud_range = torch.nn.Parameter(torch.tensor(point_cloud_range), requires_grad=False) # used for normalizing anchor to be [0, 1] for reference_points
-            self.ref_point_norm = self.point_cloud_range[3:] - self.point_cloud_range[:3]
+            # used for normalizing anchor to be [0, 1] for reference_points
+            self.point_cloud_range = torch.nn.Parameter(
+                torch.tensor(point_cloud_range), requires_grad=False)
+            self.ref_point_norm = self.point_cloud_range[3:] - \
+                self.point_cloud_range[:3]
             self.bevpos = bevpos
 
     def init_weights(self):
@@ -167,7 +171,7 @@ class Sparse4DHead(BaseModule):
         timestamp: torch.Tensor,
         projection_mat: torch.Tensor,
         batch_data_samples: List[Det3DDataSample],
-        image_wh: Optional[torch.Tensor]=None,
+        image_wh: Optional[torch.Tensor] = None,
     ):
         batch_metas = [item.metainfo for item in batch_data_samples]
         if isinstance(feature_maps, torch.Tensor):
@@ -181,11 +185,15 @@ class Sparse4DHead(BaseModule):
             if self.extra_feat:
                 extra_feats = pts_inputs[1][-1]
                 pts_inputs[1].pop(-1)
-            lidar_feat_flatten = lidar_feat.view(batch_size, lidar_feat.shape[1], -1)  # [BS, C, H*W]
-            bev_pos = self.bev_pos.repeat(batch_size, 1, 1).to(lidar_feat.device)
+            lidar_feat_flatten = lidar_feat.view(
+                batch_size, lidar_feat.shape[1], -1)  # [BS, C, H*W]
+            bev_pos = self.bev_pos.repeat(
+                batch_size, 1, 1).to(lidar_feat.device)
             if self.multiscale:
-                bev_pos_2 = self.create_2D_grid(lidar_feat.shape[2] // 2, lidar_feat.shape[2] // 2).repeat(batch_size, 1, 1).to(lidar_feat.device) * 2
-                bev_pos_4 = self.create_2D_grid(lidar_feat.shape[2] // 4, lidar_feat.shape[2] // 4).repeat(batch_size, 1, 1).to(lidar_feat.device) * 4
+                bev_pos_2 = self.create_2D_grid(
+                    lidar_feat.shape[2] // 2, lidar_feat.shape[2] // 2).repeat(batch_size, 1, 1).to(lidar_feat.device) * 2
+                bev_pos_4 = self.create_2D_grid(
+                    lidar_feat.shape[2] // 4, lidar_feat.shape[2] // 4).repeat(batch_size, 1, 1).to(lidar_feat.device) * 4
             dense_heatmap_boxes = None
             query_box = None
 
@@ -197,10 +205,13 @@ class Sparse4DHead(BaseModule):
                     new_lidar_feat = pts_inputs[1][-1]
                 else:
                     new_lidar_feat = pts_inputs[1]
-                lidar_feat_flatten = new_lidar_feat.view(*lidar_feat_flatten.shape)
+                lidar_feat_flatten = new_lidar_feat.view(
+                    *lidar_feat_flatten.shape)
 
-                dense_heatmap_img = self.heatmap_head_img(new_lidar_feat.view(lidar_feat.shape))  # [BS, num_classes, H, W]
-                heatmap = (dense_heatmap.detach().sigmoid() + dense_heatmap_img.detach().sigmoid()) / 2
+                dense_heatmap_img = self.heatmap_head_img(
+                    new_lidar_feat.view(lidar_feat.shape))  # [BS, num_classes, H, W]
+                heatmap = (dense_heatmap.detach().sigmoid() +
+                           dense_heatmap_img.detach().sigmoid()) / 2
             else:
                 heatmap = dense_heatmap.detach().sigmoid()
                 new_lidar_feat = lidar_feat
@@ -208,38 +219,50 @@ class Sparse4DHead(BaseModule):
                 heatmap_train = [dense_heatmap, dense_heatmap_img]
             else:
                 heatmap_train = dense_heatmap
-                    
+
             padding = self.nms_kernel_size // 2
             local_max = torch.zeros_like(heatmap)
             # equals to nms radius = voxel_size * out_size_factor * kenel_size
-            local_max_inner = F.max_pool2d(heatmap, kernel_size=self.nms_kernel_size, stride=1, padding=0)
-            local_max[:, :, padding:(-padding), padding:(-padding)] = local_max_inner
-            ## for Pedestrian & Traffic_cone in nuScenes
+            local_max_inner = F.max_pool2d(
+                heatmap, kernel_size=self.nms_kernel_size, stride=1, padding=0)
+            local_max[:, :, padding:(-padding),
+                      padding:(-padding)] = local_max_inner
+            # for Pedestrian & Traffic_cone in nuScenes
             if self.test_cfg['dataset'] == 'nuScenes':
-                local_max[:, 8, ] = F.max_pool2d(heatmap[:, 8], kernel_size=1, stride=1, padding=0)
-                local_max[:, 9, ] = F.max_pool2d(heatmap[:, 9], kernel_size=1, stride=1, padding=0)
-            elif self.test_cfg['dataset'] == 'Waymo':  # for Pedestrian & Cyclist in Waymo
-                local_max[:, 1, ] = F.max_pool2d(heatmap[:, 1], kernel_size=1, stride=1, padding=0)
-                local_max[:, 2, ] = F.max_pool2d(heatmap[:, 2], kernel_size=1, stride=1, padding=0)
+                local_max[:, 8, ] = F.max_pool2d(
+                    heatmap[:, 8], kernel_size=1, stride=1, padding=0)
+                local_max[:, 9, ] = F.max_pool2d(
+                    heatmap[:, 9], kernel_size=1, stride=1, padding=0)
+            # for Pedestrian & Cyclist in Waymo
+            elif self.test_cfg['dataset'] == 'Waymo':
+                local_max[:, 1, ] = F.max_pool2d(
+                    heatmap[:, 1], kernel_size=1, stride=1, padding=0)
+                local_max[:, 2, ] = F.max_pool2d(
+                    heatmap[:, 2], kernel_size=1, stride=1, padding=0)
             heatmap = heatmap * (heatmap == local_max)
             heatmap = heatmap.view(batch_size, heatmap.shape[1], -1)
 
             # top #num_proposals among all classes
-            top_proposals = heatmap.view(batch_size, -1).argsort(dim=-1, descending=True)[..., :self.num_proposals]
+            top_proposals = heatmap.view(
+                batch_size, -1).argsort(dim=-1, descending=True)[..., :self.num_proposals]
             top_proposals_class = top_proposals // heatmap.shape[-1]
             top_proposals_index = top_proposals % heatmap.shape[-1]
-            query_feat = lidar_feat_flatten.gather(index=top_proposals_index[:, None, :].expand(-1, lidar_feat_flatten.shape[1], -1), dim=-1)
+            query_feat = lidar_feat_flatten.gather(
+                index=top_proposals_index[:, None, :].expand(-1, lidar_feat_flatten.shape[1], -1), dim=-1)
             self.query_labels = top_proposals_class
 
             # add category embedding
-            one_hot = F.one_hot(top_proposals_class, num_classes=self.num_classes).permute(0, 2, 1)
+            one_hot = F.one_hot(top_proposals_class,
+                                num_classes=self.num_classes).permute(0, 2, 1)
             query_cat_encoding = self.class_encoding(one_hot.float())
             query_feat += query_cat_encoding
 
-            query_pos = bev_pos.gather(index=top_proposals_index[:, None, :].permute(0, 2, 1).expand(-1, -1, bev_pos.shape[-1]), dim=1)
-            query_heatmap_score = heatmap.gather(index=top_proposals_index[:, None, :].expand(-1, self.num_classes, -1), dim=-1)
+            query_pos = bev_pos.gather(index=top_proposals_index[:, None, :].permute(
+                0, 2, 1).expand(-1, -1, bev_pos.shape[-1]), dim=1)
+            query_heatmap_score = heatmap.gather(
+                index=top_proposals_index[:, None, :].expand(-1, self.num_classes, -1), dim=-1)
         elif self.use_lidar:
-            dense_heatmap = self.heatmap_head(lidar_feat) # original
+            dense_heatmap = self.heatmap_head(lidar_feat)  # original
 
             multistage_feats = pts_inputs[1]
             if self.reuse_first_heatmap:
@@ -267,28 +290,40 @@ class Sparse4DHead(BaseModule):
                                 dense_preds.append(task(shared_feat))
                                 dense_pred = dense_preds[-1]
                                 if 'vel' in dense_pred:
-                                    dense_pred = (dense_pred['reg'], dense_pred['height'], dense_pred['dim'], dense_pred['rot'], dense_pred['vel'])
+                                    dense_pred = (
+                                        dense_pred['reg'], dense_pred['height'], dense_pred['dim'], dense_pred['rot'], dense_pred['vel'])
                                 else:
-                                    dense_pred = (dense_pred['reg'], dense_pred['height'], dense_pred['dim'], dense_pred['rot'])
-                                dense_pred = torch.cat(dense_pred, dim=1)[:, :, None].expand(-1, -1, self.heatmap_tasks[task_id]['num_class'], -1, -1)
+                                    dense_pred = (
+                                        dense_pred['reg'], dense_pred['height'], dense_pred['dim'], dense_pred['rot'])
+                                dense_pred = torch.cat(dense_pred, dim=1)[
+                                    :, :, None].expand(-1, -1, self.heatmap_tasks[task_id]['num_class'], -1, -1)
                                 dense_heatmap_boxes.append(dense_pred)
                         else:
-                            dense_heatmap_boxes_raw = self.multi_stage_task_heads[i](shared_feat)
-                            dense_preds_raw = torch.split(dense_heatmap_boxes_raw, [10] * 6, dim=1)
+                            dense_heatmap_boxes_raw = self.multi_stage_task_heads[i](
+                                shared_feat)
+                            dense_preds_raw = torch.split(
+                                dense_heatmap_boxes_raw, [10] * 6, dim=1)
                             for task_id in range(len(self.heatmap_tasks)):
-                                dense_pred = torch.split(dense_preds_raw[task_id], [2, 1, 3, 2, 2], dim=1)
-                                dense_preds.append( dict(reg=dense_pred[0], height=dense_pred[1], dim=dense_pred[2], rot=dense_pred[3], vel=dense_pred[4]) )
-                                dense_heatmap_boxes.append( dense_preds_raw[task_id][:, :, None].expand(-1, -1, self.heatmap_tasks[task_id]['num_class'], -1, -1) )
+                                dense_pred = torch.split(dense_preds_raw[task_id], [
+                                                         2, 1, 3, 2, 2], dim=1)
+                                dense_preds.append(dict(
+                                    reg=dense_pred[0], height=dense_pred[1], dim=dense_pred[2], rot=dense_pred[3], vel=dense_pred[4]))
+                                dense_heatmap_boxes.append(dense_preds_raw[task_id][:, :, None].expand(
+                                    -1, -1, self.heatmap_tasks[task_id]['num_class'], -1, -1))
                         multistage_bev_preds.append(dense_preds)
-                        dense_heatmap_boxes = torch.cat(dense_heatmap_boxes, dim=2)
+                        dense_heatmap_boxes = torch.cat(
+                            dense_heatmap_boxes, dim=2)
 
                     heatmap = dense_heatmap.detach().sigmoid()
                     heatmap_train.append(dense_heatmap)
-                    multistage_masks.append(acc_masks.view(*heatmap.shape).clone())
-                    heatmap = heatmap * acc_masks.view(*heatmap.shape) # remove early positive
+                    multistage_masks.append(
+                        acc_masks.view(*heatmap.shape).clone())
+                    # remove early positive
+                    heatmap = heatmap * acc_masks.view(*heatmap.shape)
                 else:
                     if not self.heatmap_box:
-                        dense_heatmap_img = self.heatmap_head_img[i]( multistage_feats[i] )
+                        dense_heatmap_img = self.heatmap_head_img[i](
+                            multistage_feats[i])
                     else:
                         assert self.test_cfg['dataset'] == 'nuScenes'
                         shared_feat = multistage_feats[i]
@@ -298,62 +333,86 @@ class Sparse4DHead(BaseModule):
                             for task_id, task in enumerate(self.multi_stage_task_heads[i]):
                                 dense_preds.append(task(shared_feat))
                                 dense_pred = dense_preds[-1]
-                                dense_pred = torch.cat((dense_pred['reg'], dense_pred['height'], dense_pred['dim'], 
-                                    dense_pred['rot'], dense_pred['vel']), dim=1)[:, :, None].expand(-1, -1, self.heatmap_tasks[task_id]['num_class'], -1, -1)
+                                dense_pred = torch.cat((dense_pred['reg'], dense_pred['height'], dense_pred['dim'],
+                                                        dense_pred['rot'], dense_pred['vel']), dim=1)[:, :, None].expand(-1, -1, self.heatmap_tasks[task_id]['num_class'], -1, -1)
                                 dense_heatmap_boxes.append(dense_pred)
-                            dense_heatmap_img = torch.cat([p['heatmap'] for p in dense_preds], dim=1)
+                            dense_heatmap_img = torch.cat(
+                                [p['heatmap'] for p in dense_preds], dim=1)
                         else:
-                            dense_heatmap_boxes_raw = self.multi_stage_task_heads[i](shared_feat)
-                            dense_preds_raw = torch.split(dense_heatmap_boxes_raw, [10] * 6, dim=1)
+                            dense_heatmap_boxes_raw = self.multi_stage_task_heads[i](
+                                shared_feat)
+                            dense_preds_raw = torch.split(
+                                dense_heatmap_boxes_raw, [10] * 6, dim=1)
                             for task_id in range(len(self.heatmap_tasks)):
-                                dense_pred = torch.split(dense_preds_raw[task_id], [2, 1, 3, 2, 2], dim=1)
-                                dense_preds.append( dict(reg=dense_pred[0], height=dense_pred[1], dim=dense_pred[2], rot=dense_pred[3], vel=dense_pred[4]) )
-                                dense_heatmap_boxes.append( dense_preds_raw[task_id][:, :, None].expand(-1, -1, self.heatmap_tasks[task_id]['num_class'], -1, -1) )
-                            dense_heatmap_img = self.heatmap_head_img[i]( multistage_feats[i] )
+                                dense_pred = torch.split(dense_preds_raw[task_id], [
+                                                         2, 1, 3, 2, 2], dim=1)
+                                dense_preds.append(dict(
+                                    reg=dense_pred[0], height=dense_pred[1], dim=dense_pred[2], rot=dense_pred[3], vel=dense_pred[4]))
+                                dense_heatmap_boxes.append(dense_preds_raw[task_id][:, :, None].expand(
+                                    -1, -1, self.heatmap_tasks[task_id]['num_class'], -1, -1))
+                            dense_heatmap_img = self.heatmap_head_img[i](
+                                multistage_feats[i])
                         multistage_bev_preds.append(dense_preds)
-                        dense_heatmap_boxes = torch.cat(dense_heatmap_boxes, dim=2)
+                        dense_heatmap_boxes = torch.cat(
+                            dense_heatmap_boxes, dim=2)
 
                     heatmap = dense_heatmap_img.detach().sigmoid()
                     if i == 0:
                         heatmap_train.append(dense_heatmap)
-                        multistage_masks.append(acc_masks.view(*heatmap.shape).clone())
-                    heatmap = heatmap * acc_masks.view(*heatmap.shape) # remove early positive
+                        multistage_masks.append(
+                            acc_masks.view(*heatmap.shape).clone())
+                    # remove early positive
+                    heatmap = heatmap * acc_masks.view(*heatmap.shape)
                     heatmap_train.append(dense_heatmap_img)
-                    multistage_masks.append(acc_masks.view(*heatmap.shape).clone())
+                    multistage_masks.append(
+                        acc_masks.view(*heatmap.shape).clone())
 
-                lidar_feat_flatten = multistage_feats[i].view(*lidar_feat_flatten.shape)
+                lidar_feat_flatten = multistage_feats[i].view(
+                    *lidar_feat_flatten.shape)
 
                 padding = self.nms_kernel_size // 2
                 local_max = torch.zeros_like(heatmap)
                 # equals to nms radius = voxel_size * out_size_factor * kenel_size
-                local_max_inner = F.max_pool2d(heatmap, kernel_size=self.nms_kernel_size, stride=1, padding=0)
-                local_max[:, :, padding:(-padding), padding:(-padding)] = local_max_inner
-                ## for Pedestrian & Traffic_cone in nuScenes
+                local_max_inner = F.max_pool2d(
+                    heatmap, kernel_size=self.nms_kernel_size, stride=1, padding=0)
+                local_max[:, :, padding:(-padding),
+                          padding:(-padding)] = local_max_inner
+                # for Pedestrian & Traffic_cone in nuScenes
                 if self.test_cfg['dataset'] == 'nuScenes':
-                    local_max[:, 8, ] = F.max_pool2d(heatmap[:, 8], kernel_size=1, stride=1, padding=0)
-                    local_max[:, 9, ] = F.max_pool2d(heatmap[:, 9], kernel_size=1, stride=1, padding=0)
-                elif self.test_cfg['dataset'] == 'Waymo':  # for Pedestrian & Cyclist in Waymo
-                    local_max[:, 1, ] = F.max_pool2d(heatmap[:, 1], kernel_size=1, stride=1, padding=0)
-                    local_max[:, 2, ] = F.max_pool2d(heatmap[:, 2], kernel_size=1, stride=1, padding=0)
+                    local_max[:, 8, ] = F.max_pool2d(
+                        heatmap[:, 8], kernel_size=1, stride=1, padding=0)
+                    local_max[:, 9, ] = F.max_pool2d(
+                        heatmap[:, 9], kernel_size=1, stride=1, padding=0)
+                # for Pedestrian & Cyclist in Waymo
+                elif self.test_cfg['dataset'] == 'Waymo':
+                    local_max[:, 1, ] = F.max_pool2d(
+                        heatmap[:, 1], kernel_size=1, stride=1, padding=0)
+                    local_max[:, 2, ] = F.max_pool2d(
+                        heatmap[:, 2], kernel_size=1, stride=1, padding=0)
                 heatmap = heatmap * (heatmap == local_max)
                 heatmap = heatmap.view(batch_size, heatmap.shape[1], -1)
 
                 # top #num_proposals among all classes
-                top_proposals = torch.topk(heatmap.view(batch_size, -1), k=self.num_proposals, dim=-1, largest=True, sorted=False).indices
+                top_proposals = torch.topk(heatmap.view(
+                    batch_size, -1), k=self.num_proposals, dim=-1, largest=True, sorted=False).indices
                 # top_proposals = heatmap.view(batch_size, -1).argsort(dim=-1, descending=True)[..., :self.num_proposals]
                 top_proposals_class = top_proposals // heatmap.shape[-1]
                 top_proposals_index = top_proposals % heatmap.shape[-1]
-                query_feat = lidar_feat_flatten.gather(index=top_proposals_index[:, None, :].expand(-1, lidar_feat_flatten.shape[1], -1), dim=-1)
+                query_feat = lidar_feat_flatten.gather(
+                    index=top_proposals_index[:, None, :].expand(-1, lidar_feat_flatten.shape[1], -1), dim=-1)
 
                 query_labels.append(top_proposals_class)
 
                 # add category embedding
-                one_hot = F.one_hot(top_proposals_class, num_classes=self.num_classes).permute(0, 2, 1)
+                one_hot = F.one_hot(
+                    top_proposals_class, num_classes=self.num_classes).permute(0, 2, 1)
                 query_cat_encoding = self.class_encoding(one_hot.float())
 
                 query_feat += query_cat_encoding
-                query_pos = bev_pos.gather(index=top_proposals_index[:, None, :].permute(0, 2, 1).expand(-1, -1, bev_pos.shape[-1]), dim=1)
-                query_heatmap_score = heatmap.gather(index=top_proposals_index[:, None, :].expand(-1, self.num_classes, -1), dim=-1)
+                query_pos = bev_pos.gather(index=top_proposals_index[:, None, :].permute(
+                    0, 2, 1).expand(-1, -1, bev_pos.shape[-1]), dim=1)
+                query_heatmap_score = heatmap.gather(
+                    index=top_proposals_index[:, None, :].expand(-1, self.num_classes, -1), dim=-1)
 
                 query_feats.append(query_feat)
                 query_poses.append(query_pos)
@@ -361,79 +420,115 @@ class Sparse4DHead(BaseModule):
 
                 if self.heatmap_box:
                     box_dim = dense_heatmap_boxes.shape[1]
-                    dense_heatmap_boxes = dense_heatmap_boxes.detach().view(batch_size, box_dim, self.num_classes, heatmap.shape[-1])
+                    dense_heatmap_boxes = dense_heatmap_boxes.detach().view(
+                        batch_size, box_dim, self.num_classes, heatmap.shape[-1])
                     assert self.test_cfg['dataset'] == 'nuScenes'
                     # learns from center_int to target offsets
-                    dense_heatmap_boxes[:, :2, :, :] += bev_pos.int().float().transpose(1,2)[:, :, None].expand_as(dense_heatmap_boxes[:, :2, :, :])
-                    dense_heatmap_boxes[:, 2:3, :, :] = dense_heatmap_boxes[:, 2:3, :, :].clip(min=-5., max=3.) # gravi center
-                    dense_heatmap_boxes[:, 3:6, :, :] = dense_heatmap_boxes[:, 3:6, :, :].clip(min=np.log(0.5), max=np.log(15)) # box dim log
-                    dense_heatmap_boxes[:, 6:8, :, :] = dense_heatmap_boxes[:, 6:8, :, :].clip(min=-1., max=1.) # sincos
-                    dense_heatmap_boxes[:, 8:10, :, :] = dense_heatmap_boxes[:, 8:10, :, :].clip(min=-15., max=15.) # 
-                    
-                    dense_heatmap_boxes = dense_heatmap_boxes.view(batch_size, box_dim, self.num_classes*heatmap.shape[-1])
+                    dense_heatmap_boxes[:, :2, :, :] += bev_pos.int().float().transpose(
+                        1, 2)[:, :, None].expand_as(dense_heatmap_boxes[:, :2, :, :])
+                    dense_heatmap_boxes[:, 2:3, :, :] = dense_heatmap_boxes[:, 2:3, :, :].clip(
+                        min=-5., max=3.)  # gravi center
+                    dense_heatmap_boxes[:, 3:6, :, :] = dense_heatmap_boxes[:, 3:6, :, :].clip(
+                        min=np.log(0.5), max=np.log(15))  # box dim log
+                    dense_heatmap_boxes[:, 6:8, :, :] = dense_heatmap_boxes[:, 6:8, :, :].clip(
+                        min=-1., max=1.)  # sincos
+                    dense_heatmap_boxes[:, 8:10, :, :] = dense_heatmap_boxes[:, 8:10, :, :].clip(
+                        min=-15., max=15.)
 
-                    query_box = dense_heatmap_boxes.gather(index=top_proposals[:, None, :].expand(-1, box_dim, -1), dim=-1)
+                    dense_heatmap_boxes = dense_heatmap_boxes.view(
+                        batch_size, box_dim, self.num_classes*heatmap.shape[-1])
+
+                    query_box = dense_heatmap_boxes.gather(
+                        index=top_proposals[:, None, :].expand(-1, box_dim, -1), dim=-1)
                     query_boxes.append(query_box)
 
                 ################ select to ignore ######################
                 if self.mask_heatmap_mode == 'pos':
-                    selected_mask = acc_masks.new_zeros(batch_size, self.num_classes, heatmap.shape[-1])
-                    selected_mask.scatter_(index=top_proposals_index[:, None, :].expand(-1, self.num_classes, -1), dim=2, 
-                        src=acc_masks.new_ones((batch_size, self.num_classes, heatmap.shape[-1])))
+                    selected_mask = acc_masks.new_zeros(
+                        batch_size, self.num_classes, heatmap.shape[-1])
+                    selected_mask.scatter_(index=top_proposals_index[:, None, :].expand(-1, self.num_classes, -1), dim=2,
+                                           src=acc_masks.new_ones((batch_size, self.num_classes, heatmap.shape[-1])))
                 elif self.mask_heatmap_mode == 'poscls':
-                    selected_mask = acc_masks.new_zeros(batch_size, self.num_classes * heatmap.shape[-1])
-                    selected_mask.scatter_(index=top_proposals, dim=1, src=torch.ones_like(top_proposals, dtype=acc_masks.dtype))
+                    selected_mask = acc_masks.new_zeros(
+                        batch_size, self.num_classes * heatmap.shape[-1])
+                    selected_mask.scatter_(index=top_proposals, dim=1, src=torch.ones_like(
+                        top_proposals, dtype=acc_masks.dtype))
                 elif self.mask_heatmap_mode == 'boxcls':
-                    boxmask_margin=1.
-                    boxmask_margin_ratio=None
-                    
-                    assert self.test_cfg['dataset'] == 'nuScenes'
-                    selected_mask = acc_masks.new_zeros(batch_size, self.num_classes * heatmap.shape[-1])
-                    selected_mask.scatter_(index=top_proposals, dim=1, src=torch.ones_like(top_proposals, dtype=acc_masks.dtype))
+                    boxmask_margin = 1.
+                    boxmask_margin_ratio = None
 
-                    def pos_inside_boxes(query_box, bev_pos, margin, min_bev_dim, margin_ratio=None): # bev_dim > 108 / 180 = 0.6
+                    assert self.test_cfg['dataset'] == 'nuScenes'
+                    selected_mask = acc_masks.new_zeros(
+                        batch_size, self.num_classes * heatmap.shape[-1])
+                    selected_mask.scatter_(index=top_proposals, dim=1, src=torch.ones_like(
+                        top_proposals, dtype=acc_masks.dtype))
+
+                    # bev_dim > 108 / 180 = 0.6
+                    def pos_inside_boxes(query_box, bev_pos, margin, min_bev_dim, margin_ratio=None):
                         assert query_box.shape[1] >= 9
-                        rot, dim, center, height, vel = query_box[:, 6:8], query_box[:, 3:6], query_box[:, 0:2], query_box[:, 2:3], query_box[:, 8:]
-                        query_boxes_std = self.bbox_coder.decode_box(rot.clone(), dim.clone(), center.clone(), height.clone(), vel.clone())
-                        pc_range = torch.as_tensor([-54, -54, -5.0, 54, 54, 3.0], device='cuda')
-                        query_boxes_std[..., [0,]] = query_boxes_std[..., [0,]].clip(min=pc_range[0], max=pc_range[3])
-                        query_boxes_std[..., [1,]] = query_boxes_std[..., [1,]].clip(min=pc_range[1], max=pc_range[4])
+                        rot, dim, center, height, vel = query_box[:, 6:8], query_box[:,
+                                                                                     3:6], query_box[:, 0:2], query_box[:, 2:3], query_box[:, 8:]
+                        query_boxes_std = self.bbox_coder.decode_box(
+                            rot.clone(), dim.clone(), center.clone(), height.clone(), vel.clone())
+                        pc_range = torch.as_tensor(
+                            [-54, -54, -5.0, 54, 54, 3.0], device='cuda')
+                        query_boxes_std[..., [0,]] = query_boxes_std[..., [
+                            0,]].clip(min=pc_range[0], max=pc_range[3])
+                        query_boxes_std[..., [1,]] = query_boxes_std[..., [
+                            1,]].clip(min=pc_range[1], max=pc_range[4])
                         if margin_ratio is not None and margin_ratio > 0.:
-                            query_boxes_std[..., [3,4]] *= (1. - margin_ratio)
+                            query_boxes_std[..., [3, 4]] *= (1. - margin_ratio)
                         else:
-                            query_boxes_std[..., [3,4]] -= margin
-                        query_boxes_std[..., [3,4]] = query_boxes_std[..., [3,4]].clip(min=min_bev_dim, max=10.)
-                        query_boxes_std[..., 5] = 1000 # height -> max 
-                        query_boxes_std[..., 2] = -100. # bottom center
-                        temp_bev_pos = self.bbox_coder.decode_center(bev_pos.transpose(1,2)) # bev points
-                        temp_bev_pos = torch.cat([temp_bev_pos, temp_bev_pos.new_zeros(batch_size, 1, bev_pos.shape[1])], dim=1).transpose(1,2)
-                        inside_boxes = points_in_boxes_part( 
-                            temp_bev_pos, 
+                            query_boxes_std[..., [3, 4]] -= margin
+                        query_boxes_std[..., [3, 4]] = query_boxes_std[..., [
+                            3, 4]].clip(min=min_bev_dim, max=10.)
+                        query_boxes_std[..., 5] = 1000  # height -> max
+                        query_boxes_std[..., 2] = -100.  # bottom center
+                        temp_bev_pos = self.bbox_coder.decode_center(
+                            bev_pos.transpose(1, 2))  # bev points
+                        temp_bev_pos = torch.cat([temp_bev_pos, temp_bev_pos.new_zeros(
+                            batch_size, 1, bev_pos.shape[1])], dim=1).transpose(1, 2)
+                        inside_boxes = points_in_boxes_part(
+                            temp_bev_pos,
                             query_boxes_std[:, :, :7])
 
                         return inside_boxes
 
-                    inside_boxes = pos_inside_boxes(query_box, bev_pos, margin=boxmask_margin, min_bev_dim=0.7, margin_ratio=boxmask_margin_ratio)
-                    bev_pos_class = top_proposals_class.gather(index=inside_boxes.clip(min=0).long(), dim=1)
-                    bev_pos_class[inside_boxes == -1] = self.num_classes # background
-                    selected_mask_box = acc_masks.new_zeros(batch_size, self.num_classes + 1, heatmap.shape[-1])
-                    selected_mask_box.scatter_(index=bev_pos_class[:, None], dim=1, src=torch.ones_like(bev_pos_class[:, None], dtype=acc_masks.dtype))
-                    selected_mask_box = selected_mask_box[:, :self.num_classes].reshape(batch_size, self.num_classes * heatmap.shape[-1])
+                    inside_boxes = pos_inside_boxes(
+                        query_box, bev_pos, margin=boxmask_margin, min_bev_dim=0.7, margin_ratio=boxmask_margin_ratio)
+                    bev_pos_class = top_proposals_class.gather(
+                        index=inside_boxes.clip(min=0).long(), dim=1)
+                    bev_pos_class[inside_boxes == -
+                                  1] = self.num_classes  # background
+                    selected_mask_box = acc_masks.new_zeros(
+                        batch_size, self.num_classes + 1, heatmap.shape[-1])
+                    selected_mask_box.scatter_(index=bev_pos_class[:, None], dim=1, src=torch.ones_like(
+                        bev_pos_class[:, None], dtype=acc_masks.dtype))
+                    selected_mask_box = selected_mask_box[:, :self.num_classes].reshape(
+                        batch_size, self.num_classes * heatmap.shape[-1])
 
-                    selected_mask = (selected_mask + selected_mask_box > 0.1).float()
+                    selected_mask = (
+                        selected_mask + selected_mask_box > 0.1).float()
                 else:
-                    selected_mask = acc_masks.new_zeros(batch_size, self.num_classes * heatmap.shape[-1])
-                
+                    selected_mask = acc_masks.new_zeros(
+                        batch_size, self.num_classes * heatmap.shape[-1])
+
                 selected_mask = selected_mask.reshape(*dense_heatmap.shape)
                 # masking by pooling
-                selected_mask_kernel = F.max_pool2d(selected_mask, kernel_size=self.nms_kernel_size, stride=1, padding=self.nms_kernel_size // 2) 
-                if self.test_cfg['dataset'] == 'nuScenes': ## for Pedestrian & Traffic_cone in nuScenes
-                    selected_mask_kernel[:, 8:10] = F.max_pool2d(selected_mask[:, 8:10], kernel_size=1, stride=1, padding=0)
-                elif self.test_cfg['dataset'] == 'Waymo':  # for Pedestrian & Cyclist in Waymo
-                    selected_mask_kernel[:, 1:3] = F.max_pool2d(selected_mask[:, 1:3], kernel_size=1, stride=1, padding=0)
-                
-                acc_masks = acc_masks * (1.-selected_mask_kernel).view(*acc_masks.shape)
-                
+                selected_mask_kernel = F.max_pool2d(
+                    selected_mask, kernel_size=self.nms_kernel_size, stride=1, padding=self.nms_kernel_size // 2)
+                # for Pedestrian & Traffic_cone in nuScenes
+                if self.test_cfg['dataset'] == 'nuScenes':
+                    selected_mask_kernel[:, 8:10] = F.max_pool2d(
+                        selected_mask[:, 8:10], kernel_size=1, stride=1, padding=0)
+                # for Pedestrian & Cyclist in Waymo
+                elif self.test_cfg['dataset'] == 'Waymo':
+                    selected_mask_kernel[:, 1:3] = F.max_pool2d(
+                        selected_mask[:, 1:3], kernel_size=1, stride=1, padding=0)
+
+                acc_masks = acc_masks * \
+                    (1.-selected_mask_kernel).view(*acc_masks.shape)
+
             self.query_labels = torch.cat(query_labels, dim=1)
             query_feat = torch.cat(query_feats, dim=2)
             query_pos = torch.cat(query_poses, dim=1)
@@ -442,7 +537,7 @@ class Sparse4DHead(BaseModule):
                 query_box = torch.cat(query_boxes, dim=2)
 
             self.num_proposals = self.num_proposals_ori * self.multistage_heatmap
-        
+
         if self.use_lidar:
             if self.training:
                 self.num_gts = [i.shape[0] for i in gt_labels_3d]
@@ -462,36 +557,47 @@ class Sparse4DHead(BaseModule):
 
                 multiscale_inputs = [lidar_feat]
                 if self.multiscale:
-                    multiscale_inputs.append( self.dconv(multiscale_inputs[-1]) )
-                    multiscale_inputs.append( self.dconv2(multiscale_inputs[-1]) )
-                multiscale_inputs_flatten = torch.cat([i.flatten(2,3) for i in multiscale_inputs], dim=-1)
+                    multiscale_inputs.append(self.dconv(multiscale_inputs[-1]))
+                    multiscale_inputs.append(
+                        self.dconv2(multiscale_inputs[-1]))
+                multiscale_inputs_flatten = torch.cat(
+                    [i.flatten(2, 3) for i in multiscale_inputs], dim=-1)
                 # moved the line below out of the decoder layer for loop in focal_decoder
                 bev_pos = torch.cat([bev_pos, bev_pos_2, bev_pos_4], dim=1)
-            
+
             ################## Deformable Parameters #############
             if not self.multiscale:
                 W, H = lidar_feat.shape[-2:]
-                spatial_shapes = torch.as_tensor([ [W, H] ], dtype=torch.long, device='cuda')
-                level_start_index = torch.as_tensor([0,], dtype=torch.long, device='cuda')
+                spatial_shapes = torch.as_tensor(
+                    [[W, H]], dtype=torch.long, device='cuda')
+                level_start_index = torch.as_tensor(
+                    [0,], dtype=torch.long, device='cuda')
             else:
-                spatial_shapes = torch.as_tensor([ i.shape[2:] for i in multiscale_inputs ], dtype=torch.long, device='cuda')
-                level_start_index = torch.as_tensor([0, *(torch.cumsum(torch.prod(spatial_shapes, dim=1), dim=0)[:-1])], dtype=torch.long, device='cuda')
+                spatial_shapes = torch.as_tensor(
+                    [i.shape[2:] for i in multiscale_inputs], dtype=torch.long, device='cuda')
+                level_start_index = torch.as_tensor(
+                    [0, *(torch.cumsum(torch.prod(spatial_shapes, dim=1), dim=0)[:-1])], dtype=torch.long, device='cuda')
 
                 # lidar feat
                 lidar_feat_flatten = multiscale_inputs_flatten
             MSDA_kwargs = dict(
-                spatial_shapes = spatial_shapes,
-                level_start_index = level_start_index,
-                valid_ratios = torch.ones((batch_size, 1, 2), device='cuda'),
+                spatial_shapes=spatial_shapes,
+                level_start_index=level_start_index,
+                valid_ratios=torch.ones((batch_size, 1, 2), device='cuda'),
             )
-            breakpoint() # verify MSDA kwargs
+            breakpoint()  # verify MSDA kwargs
 
             if self.bevpos:
-                bev_reference_points = bev_pos / torch.flip(spatial_shapes[:1], dims=(1,))[:, None]
-                bev_sine_pos = gen_sineembed_for_position(bev_reference_points[:,:,:2])
-                breakpoint() # check size of bev_sin_pos, what is channel size? pos_embed_learned needs to match
-                bev_pos_embed = self.pos_embed_learned(bev_sine_pos) # bs, nq, 256
-                pos_lidar_feat_flatten = lidar_feat_flatten + bev_pos_embed.transpose(1,2) #TODO( multiple addition for bev pos embedding )
+                bev_reference_points = bev_pos / \
+                    torch.flip(spatial_shapes[:1], dims=(1,))[:, None]
+                bev_sine_pos = gen_sineembed_for_position(
+                    bev_reference_points[:, :, :2])
+                breakpoint()  # check size of bev_sin_pos, what is channel size? pos_embed_learned needs to match
+                bev_pos_embed = self.pos_embed_learned(
+                    bev_sine_pos)  # bs, nq, 256
+                # TODO( multiple addition for bev pos embedding )
+                pos_lidar_feat_flatten = lidar_feat_flatten + \
+                    bev_pos_embed.transpose(1, 2)
             else:
                 pos_lidar_feat_flatten = lidar_feat_flatten
 
@@ -612,19 +718,22 @@ class Sparse4DHead(BaseModule):
                     image_wh,
                 )
             elif op == "deformable_lidar":
-                breakpoint() # verify input shapes are as expected
+                breakpoint()  # verify input shapes are as expected
                 # normalize anchor to [0, 1] to get reference_points
                 reference_points = anchor[..., :2]
-                reference_points = (reference_points - torch.tensor(self.point_cloud_range[:2], device=reference_points.device)) / torch.tensor(self.ref_point_norm[:2], device=reference_points.device)
+                reference_points = (reference_points - torch.tensor(self.point_cloud_range[:2], device=reference_points.device)) / torch.tensor(
+                    self.ref_point_norm[:2], device=reference_points.device)
 
-                breakpoint() # verify reference points are in correct range [0,1]
+                # verify reference points are in correct range [0,1]
+                breakpoint()
                 instance_feature = self.layers[i](
-                    query=instance_feature, # B x N x C
-                    value=pos_lidar_feat_flatten.permute(0, 2, 1), # B C Pv -> B Pv C
-                    query_pos=anchor_embed, # B 600 C
-                    reference_points=reference_points, # B 600 2
+                    query=instance_feature,  # B x N x C
+                    value=pos_lidar_feat_flatten.permute(
+                        0, 2, 1),  # B C Pv -> B Pv C
+                    query_pos=anchor_embed,  # B 600 C
+                    reference_points=reference_points,  # B 600 2
                     **MSDA_kwargs,)
-                breakpoint() # verify output still has the same shape
+                breakpoint()  # verify output still has the same shape
             elif op == "refine":
                 anchor, cls, qt = self.layers[i](
                     instance_feature,
