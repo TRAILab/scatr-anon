@@ -48,11 +48,9 @@ model = dict(
         )
     ),
     pts_bbox_head=dict(
-        deformable_model=dict(
-            num_levels=num_levels
-        ),
+        point_cloud_range=point_cloud_range,
         refine_layer=dict(
-            num_cls={{_base_.num_classes}},
+            num_cls={{_base_.num_classes}}, # from dataset
         ),
         sampler=dict(
             cls_wise_reg_weights={

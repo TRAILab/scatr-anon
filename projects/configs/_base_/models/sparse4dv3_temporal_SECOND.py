@@ -8,8 +8,7 @@ temporal = True
 drop_out = 0.1
 with_quality_estimation = True
 tracking_threshold = 0.2
-multistage_heatmap = 1
-inter_channel = 128
+multistage_heatmap = 1  # 1 for LiDAR, 2 for fusion
 extra_feat = True
 
 voxel_size = [0.075, 0.075, 0.2]
@@ -35,7 +34,8 @@ model = dict(
         sparse_shape=[41, 1440, 1440],
         output_channels=128,
         order=('conv', 'norm', 'act'),
-        encoder_channels=((16, 16, 32), (32, 32, 64), (64, 64, 128), (128, 128)),
+        encoder_channels=((16, 16, 32), (32, 32, 64),
+                          (64, 64, 128), (128, 128)),
         encoder_paddings=((0, 0, 1), (0, 0, 1), (0, 0, [0, 1, 1]), (0, 0)),
         block_type='basicblock'),
     pts_backbone=dict(
@@ -59,7 +59,7 @@ model = dict(
         num_layers=multistage_heatmap,
         in_channels_img=256,
         in_channels_pts=sum([256, 256]),
-        hidden_channel=inter_channel,
+        hidden_channel=embed_dims,
         bn_momentum=0.1,
         max_points_height=10,
         bias='auto',
@@ -73,6 +73,8 @@ model = dict(
         type="Sparse4DHead",
         cls_threshold_to_reg=0.05,
         decouple_attn=decouple_attn,
+        multistage_heatmap=multistage_heatmap,
+        modality="lidar",
         instance_bank=dict(
             type="InstanceBank",
             num_anchor=900,
@@ -97,7 +99,7 @@ model = dict(
             [
                 "gnn",
                 "norm",
-                "deformable",
+                "deformable_lidar",
                 "ffn",
                 "norm",
                 "refine",
@@ -107,7 +109,7 @@ model = dict(
                 "temp_gnn",
                 "gnn",
                 "norm",
-                "deformable",
+                "deformable_lidar",
                 "ffn",
                 "norm",
                 "refine",
@@ -142,27 +144,12 @@ model = dict(
             act_cfg=dict(type="ReLU", inplace=True),
         ),
         deformable_model=dict(
-            type="DeformableFeatureAggregation",
+            type='MultiScaleDeformableAttention',
             embed_dims=embed_dims,
-            num_groups=num_groups,
-            num_cams=6,
-            attn_drop=0.15,
-            use_deformable_func=use_deformable_func,
-            use_camera_embed=True,
-            residual_mode="cat",
-            kps_generator=dict(
-                type="SparseBox3DKeyPointsGenerator",
-                num_learnable_pts=6,
-                fix_scale=[
-                    [0, 0, 0],
-                    [0.45, 0, 0],
-                    [-0.45, 0, 0],
-                    [0, 0.45, 0],
-                    [0, -0.45, 0],
-                    [0, 0, 0.45],
-                    [0, 0, -0.45],
-                ],
-            ),
+            num_levels=3,
+            num_points=4,
+            num_heads=8,
+            batch_first=True, # Need this param
         ),
         refine_layer=dict(
             type="SparseBox3DRefinementModule",
