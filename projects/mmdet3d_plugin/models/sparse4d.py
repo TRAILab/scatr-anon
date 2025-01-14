@@ -94,7 +94,7 @@ class Sparse4D(MVXTwoStageDetector):
             batch_input_metas=batch_input_metas,)
 
         # pts feature extraction
-        if self.with_voxel_encoder:
+        if self.with_pts_voxel_encoder:
             pts_feats = self.extract_pts_feat(
                 batch_inputs_dict.get('voxels', None),
                 batch_input_metas=batch_input_metas,
@@ -109,7 +109,7 @@ class Sparse4D(MVXTwoStageDetector):
             pts_feats = [None]
 
         # breakpoint()  # check output of new_pts_feat against focalformer
-        if self.with_fusion:
+        if self.with_pts_fusion_layer:
             new_img_feat, new_pts_feat = self.pts_fusion_layer(
                 feature_maps[0], pts_feats[0], batch_input_metas)
             # new_img_feat is not actually used in focalformer head
@@ -177,3 +177,15 @@ class Sparse4D(MVXTwoStageDetector):
             batch_data_samples, data_instances_3d=results
         )
         return output
+
+    @property
+    def with_pts_fusion_layer(self):
+        """bool: Whether the detector has a fusion layer.
+        Original MVXTwoStageDetector has a typo, calls self.fusion_layer instead of self.pts_fusion_layer"""
+        return hasattr(self, 'pts_fusion_layer') and self.pts_fusion_layer is not None
+
+    @property
+    def with_pts_voxel_encoder(self):
+        """bool: Whether the detector has a voxel encoder."""
+        return hasattr(self,
+                       'pts_voxel_encoder') and self.pts_voxel_encoder is not None
