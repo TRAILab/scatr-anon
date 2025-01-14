@@ -46,7 +46,7 @@ class Sparse4D(MVXTwoStageDetector):
                 True, True, offset=False, ratio=0.5, mode=1, prob=0.7
             )
 
-        if freeze_pts:
+        if freeze_pts and self.with_pts_backbone:
             self.pts_backbone.eval()
             for param in self.pts_backbone.parameters():
                 param.requires_grad = False
@@ -94,10 +94,13 @@ class Sparse4D(MVXTwoStageDetector):
             batch_input_metas=batch_input_metas,)
 
         # pts feature extraction
-        pts_feats = self.extract_pts_feat(
-            batch_inputs_dict.get('voxels', None),
-            batch_input_metas=batch_input_metas,
-        )
+        if self.with_voxel_encoder:
+            pts_feats = self.extract_pts_feat(
+                batch_inputs_dict.get('voxels', None),
+                batch_input_metas=batch_input_metas,
+            )
+        else:
+            pts_feats = None
         # hash_tensor(pts_feats[0]) = 47c0c66f09f334cc63bff52660e5dcc05236722a with no spconv
         # 0ea90631caf8286115d6cfb827a21017b09398f6 with SPCONV
         if feature_maps is None:
@@ -105,7 +108,7 @@ class Sparse4D(MVXTwoStageDetector):
         if pts_feats is None:
             pts_feats = [None]
 
-        breakpoint()  # check output of new_pts_feat against focalformer
+        # breakpoint()  # check output of new_pts_feat against focalformer
         if self.with_fusion:
             new_img_feat, new_pts_feat = self.pts_fusion_layer(
                 feature_maps[0], pts_feats[0], batch_input_metas)
@@ -125,6 +128,7 @@ class Sparse4D(MVXTwoStageDetector):
         timestamp = torch.tensor([bs.metainfo["timestamp"]
                                  for bs in batch_data_samples], dtype=torch.float64)
         model_outs = self.pts_bbox_head(
+            new_pts_feat,
             new_img_feat,
             timestamp=timestamp,
             projection_mat=batch_inputs_dict["lidar2img"].to(torch.float32),
@@ -160,6 +164,7 @@ class Sparse4D(MVXTwoStageDetector):
         timestamp = torch.tensor([bs.metainfo["timestamp"]
                                  for bs in batch_data_samples], dtype=torch.float64)
         model_outs = self.pts_bbox_head(
+            new_pts_feat,
             new_img_feat,
             timestamp=timestamp,
             projection_mat=batch_inputs_dict["lidar2img"].to(torch.float32),
@@ -171,5 +176,4 @@ class Sparse4D(MVXTwoStageDetector):
         output = self.add_pred_to_datasample(
             batch_data_samples, data_instances_3d=results
         )
-        # output = [op for op in output if not op.metainfo["padding"]]
         return output
