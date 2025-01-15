@@ -8,8 +8,8 @@ temporal = True
 drop_out = 0.1
 with_quality_estimation = True
 tracking_threshold = 0.2
-multistage_heatmap = 1  # 1 for LiDAR, 2 for fusion
-extra_feat = True
+multistage_heatmap = False  # 1 for LiDAR, 2 for fusion, False for no heatmap init
+extra_feat = False # True for multistage_heatmap
 
 voxel_size = [0.075, 0.075, 0.2]
 
@@ -73,8 +73,12 @@ model = dict(
         type="Sparse4DHead",
         cls_threshold_to_reg=0.05,
         decouple_attn=decouple_attn,
+        # focalformer3d_params
         multistage_heatmap=multistage_heatmap,
+        extra_feat=extra_feat,
         modality="lidar",
+        xy_size=(180, 180),
+        init_pq_with_heatmap=False, # TODO add support for HM init
         instance_bank=dict(
             type="InstanceBank",
             num_anchor=900,

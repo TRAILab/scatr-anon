@@ -97,7 +97,6 @@ train_pipeline = [
             "gt_bboxes_3d",
             "gt_labels_3d",
             "instance_inds",
-            "lidar2img",
         ],
         meta_keys=["lidar2global", "timestamp",
                    "sample_idx", "scene_token", "lidar_path"],
@@ -113,7 +112,7 @@ test_pipeline = [
     ),
     dict(
         type="Pack3DTrackInputs",
-        keys=["points", "lidar2img",],
+        keys=["points",],
         meta_keys=["lidar2global", "timestamp",
                    "sample_idx", "scene_token", "lidar_path"],
     ),

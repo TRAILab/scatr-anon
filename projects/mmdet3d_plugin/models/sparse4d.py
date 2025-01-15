@@ -108,7 +108,8 @@ class Sparse4D(MVXTwoStageDetector):
         if pts_feats is None:
             pts_feats = [None]
 
-        # breakpoint()  # check output of new_pts_feat against focalformer
+        # TODO check output of new_pts_feat against focalformer, need the same torch/cuda version for reproducibility
+        # breakpoint() 
         if self.with_pts_fusion_layer:
             new_img_feat, new_pts_feat = self.pts_fusion_layer(
                 feature_maps[0], pts_feats[0], batch_input_metas)
@@ -163,13 +164,22 @@ class Sparse4D(MVXTwoStageDetector):
         # timestamp needs to be type double to avoid quantization errors
         timestamp = torch.tensor([bs.metainfo["timestamp"]
                                  for bs in batch_data_samples], dtype=torch.float64)
+        # handle camera-specific data
+        if 'lidar2img' in batch_inputs_dict:
+            lidar2img = batch_inputs_dict['lidar2img'].to(torch.float32)
+        else:
+            lidar2img = None
+        if 'img_shape' in batch_inputs_dict:
+            image_wh = batch_inputs_dict['img_shape'][..., [1, 0]]
+        else:
+            image_wh = None
         model_outs = self.pts_bbox_head(
             new_pts_feat,
             new_img_feat,
             timestamp=timestamp,
-            projection_mat=batch_inputs_dict["lidar2img"].to(torch.float32),
+            projection_mat=lidar2img,
             # flip (H, W) to (W, H)
-            image_wh=batch_inputs_dict["img_shape"][..., [1, 0]],
+            image_wh=image_wh,
             batch_data_samples=batch_data_samples,
         )
         results = self.pts_bbox_head.post_process(model_outs)
