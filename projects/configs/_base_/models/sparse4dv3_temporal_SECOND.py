@@ -190,26 +190,4 @@ model = dict(
                      score_threshold=tracking_threshold),
         reg_weights=[2.0] * 3 + [1.0] * 7,
     ),
-    init_cfg=[
-        dict(
-            type='Pretrained',
-            prefix='pts_middle_encoder',
-            checkpoint='ckpts/focalformer3d_converted/DeformFormer3D_L_iterimg_ep20_mAP655_NDS707.pth'
-        ),
-        dict(
-            type='Pretrained',
-            prefix='pts_backbone',
-            checkpoint='ckpts/focalformer3d_converted/DeformFormer3D_L_iterimg_ep20_mAP655_NDS707.pth'
-        ),
-        dict(
-            type='Pretrained',
-            prefix='pts_neck',
-            checkpoint='ckpts/focalformer3d_converted/DeformFormer3D_L_iterimg_ep20_mAP655_NDS707.pth'
-        ),
-        dict(
-            type='Pretrained',
-            prefix='pts_fusion_layer',
-            checkpoint='ckpts/focalformer3d_converted/DeformFormer3D_L_iterimg_ep20_mAP655_NDS707.pth'
-        ),
-    ]
 )
