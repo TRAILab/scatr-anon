@@ -444,9 +444,6 @@ class Sparse4DHead(BaseModule):
             self.num_proposals = self.num_proposals_ori * self.multistage_heatmap
 
         if self.use_lidar:
-            if self.training:
-                self.num_gts = [i.shape[0] for i in gt_labels_3d]
-                self.max_num_gts = max(self.num_gts)
             if self.init_pq_with_heatmap:
                 query_labels = self.query_labels
 
@@ -616,8 +613,7 @@ class Sparse4DHead(BaseModule):
             elif op == "deformable_lidar":
                 # normalize anchor to [0, 1] to get reference_points
                 reference_points = anchor[..., :2]
-                reference_points = (reference_points - torch.tensor(self.point_cloud_range[:2], device=reference_points.device)) / torch.tensor(
-                    self.ref_point_norm[:2], device=reference_points.device)
+                reference_points = (reference_points - self.point_cloud_range[:2].to(reference_points.device)) / self.ref_point_norm[:2].to(reference_points.device)
                 reference_points = reference_points.clamp(0, 1)
                 # expand reference_points to match the shape of valid ratios, see mmdet DeformableDetrTransformerDecoder
                 reference_points_input = \

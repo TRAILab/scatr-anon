@@ -9,7 +9,7 @@ drop_out = 0.1
 with_quality_estimation = True
 tracking_threshold = 0.2
 multistage_heatmap = False  # 1 for LiDAR, 2 for fusion, False for no heatmap init
-extra_feat = False # True for multistage_heatmap
+extra_feat = False  # True for multistage_heatmap
 
 voxel_size = [0.075, 0.075, 0.2]
 
@@ -78,7 +78,7 @@ model = dict(
         extra_feat=extra_feat,
         modality="lidar",
         xy_size=(180, 180),
-        init_pq_with_heatmap=False, # TODO add support for HM init
+        init_pq_with_heatmap=False,  # TODO add support for HM init
         instance_bank=dict(
             type="InstanceBank",
             num_anchor=900,
@@ -153,7 +153,7 @@ model = dict(
             num_levels=3,
             num_points=4,
             num_heads=8,
-            batch_first=True, # Need this param
+            batch_first=True,  # Need this param
         ),
         refine_layer=dict(
             type="SparseBox3DRefinementModule",
@@ -190,4 +190,26 @@ model = dict(
                      score_threshold=tracking_threshold),
         reg_weights=[2.0] * 3 + [1.0] * 7,
     ),
+    init_cfg=[
+        dict(
+            type='Pretrained',
+            prefix='pts_middle_encoder',
+            checkpoint='ckpts/focalformer3d_converted/DeformFormer3D_L_iterimg_ep20_mAP655_NDS707.pth'
+        ),
+        dict(
+            type='Pretrained',
+            prefix='pts_backbone',
+            checkpoint='ckpts/focalformer3d_converted/DeformFormer3D_L_iterimg_ep20_mAP655_NDS707.pth'
+        ),
+        dict(
+            type='Pretrained',
+            prefix='pts_neck',
+            checkpoint='ckpts/focalformer3d_converted/DeformFormer3D_L_iterimg_ep20_mAP655_NDS707.pth'
+        ),
+        dict(
+            type='Pretrained',
+            prefix='pts_fusion_layer',
+            checkpoint='ckpts/focalformer3d_converted/DeformFormer3D_L_iterimg_ep20_mAP655_NDS707.pth'
+        ),
+    ]
 )

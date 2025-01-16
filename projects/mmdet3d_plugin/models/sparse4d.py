@@ -122,32 +122,44 @@ class Sparse4D(MVXTwoStageDetector):
              batch_data_samples: List[Det3DDataSample],
              **kwargs) -> List[Det3DDataSample]:
         batch_input_metas = [item.metainfo for item in batch_data_samples]
+
         # extract features
         new_img_feat, depths, new_pts_feat = self.extract_feat(
             batch_inputs_dict, batch_input_metas)
         # timestamp needs to be type double to avoid quantization errors
         timestamp = torch.tensor([bs.metainfo["timestamp"]
                                  for bs in batch_data_samples], dtype=torch.float64)
+        
+        # handle camera-specific data
+        if 'lidar2img' in batch_inputs_dict:
+            lidar2img = batch_inputs_dict['lidar2img'].to(torch.float32)
+        else:
+            lidar2img = None
+        if 'img_shape' in batch_inputs_dict:
+            # flip (H, W) to (W, H)
+            image_wh = batch_inputs_dict['img_shape'][..., [1, 0]]
+        else:
+            image_wh = None
+        
         model_outs = self.pts_bbox_head(
             new_pts_feat,
             new_img_feat,
             timestamp=timestamp,
-            projection_mat=batch_inputs_dict["lidar2img"].to(torch.float32),
-            # flip (H, W) to (W, H)
-            image_wh=batch_inputs_dict["img_shape"][..., [1, 0]],
+            projection_mat=lidar2img,
+            image_wh=image_wh,
             batch_data_samples=batch_data_samples,
         )
 
         output = self.pts_bbox_head.loss(model_outs, batch_data_samples)
 
-        gt_depth = [
-            torch.from_numpy(
-                np.stack([depth.metainfo["gt_depth"][i]
-                         for depth in batch_data_samples])
-            ).to(device=new_img_feat[0].device)
-            for i in range(len(batch_data_samples[0].metainfo["gt_depth"]))
-        ]
         if depths is not None:
+            gt_depth = [
+                torch.from_numpy(
+                    np.stack([depth.metainfo["gt_depth"][i]
+                            for depth in batch_data_samples])
+                ).to(device=new_img_feat[0].device)
+                for i in range(len(batch_data_samples[0].metainfo["gt_depth"]))
+            ]
             output["loss_dense_depth"] = self.depth_branch.loss(
                 depths, gt_depth
             )
@@ -170,15 +182,16 @@ class Sparse4D(MVXTwoStageDetector):
         else:
             lidar2img = None
         if 'img_shape' in batch_inputs_dict:
+            # flip (H, W) to (W, H)
             image_wh = batch_inputs_dict['img_shape'][..., [1, 0]]
         else:
             image_wh = None
+        
         model_outs = self.pts_bbox_head(
             new_pts_feat,
             new_img_feat,
             timestamp=timestamp,
             projection_mat=lidar2img,
-            # flip (H, W) to (W, H)
             image_wh=image_wh,
             batch_data_samples=batch_data_samples,
         )
