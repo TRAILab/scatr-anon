@@ -15,8 +15,11 @@ total_batch_size = batch_size * num_gpus
 input_shape = (704, 256)
 num_epochs = 12
 checkpoint_epoch_interval = 1
-work_dir = f"work_dirs/sparse4dv3-temporal_lidar_1x{num_gpus}_bs{batch_size}_{input_shape[1]}x{input_shape[0]}-{num_epochs}e"
-load_from = './work_dirs/DeformFormer3D_L/epoch_20.pth'
+
+short_name = "lidar-minival"
+work_dir = f"work_dirs/sparse4dv3-temporal_lidar_1x{num_gpus}_bs{batch_size}_{input_shape[1]}x{input_shape[0]}-{num_epochs}e_{short_name}"
+
+load_from = 'ckpts/focalformer3d_converted/DeformFormer3D_L_iterimg_ep20_mAP655_NDS707.pth'
 resume_from = None
 
 tracking_test = True
@@ -138,14 +141,16 @@ custom_hooks = [
 ]
 
 vis_backends = [
-    dict(type="LocalVisBackend", save_dir=work_dir),
-    dict(type="TensorboardVisBackend", save_dir=work_dir),
+    dict(type="LocalVisBackend"),
+    dict(type="TensorboardVisBackend"),
     dict(
         type='WandbVisBackend',
         save_dir=work_dir,
         init_kwargs=dict(
             entity="trailab",
-            project="Sparse4Dv3-Lidar"),
+            project="Sparse4Dv3-Lidar",
+            name=short_name,
+        )
     )
 ]
 visualizer = dict(
