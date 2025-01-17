@@ -11,8 +11,7 @@ if [ ${gpu_num} -gt 1 ]
 then
     bash ./tools/dist_train.sh \
         ${config} \
-        ${gpu_num} \
-        # --work-dir=work_dirs/$1
+        ${gpu_num}
 else
     python ./tools/train.py \
         ${config}
