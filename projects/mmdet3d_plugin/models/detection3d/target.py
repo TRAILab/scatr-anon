@@ -69,14 +69,15 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
         self,
         cls_pred,
         box_pred,
-        cls_target,
-        box_target,
+        cls_gt,
+        box_gt,
+        id_gt
     ):
         bs, num_pred, num_cls = cls_pred.shape
 
-        cls_cost = self._cls_cost(cls_pred, cls_target)
+        cls_cost = self._cls_cost(cls_pred, cls_gt)
 
-        box_target = self.encode_reg_target(box_target, box_pred.device)
+        box_target = self.encode_reg_target(box_gt, box_pred.device)
 
         instance_reg_weights = []
         for i in range(len(box_target)):
@@ -86,7 +87,7 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
             if self.cls_wise_reg_weights is not None:
                 for cls, weight in self.cls_wise_reg_weights.items():
                     weights = torch.where(
-                        (cls_target[i] == cls)[:, None],
+                        (cls_gt[i] == cls)[:, None],
                         weights.new_tensor(weight),
                         weights,
                     )
@@ -106,19 +107,21 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
                 indices.append([None, None])
 
         output_cls_target = (
-            cls_target[0].new_ones([bs, num_pred], dtype=torch.long) * num_cls
+            cls_gt[0].new_ones([bs, num_pred], dtype=torch.long) * num_cls
         )
         output_box_target = box_pred.new_zeros(box_pred.shape)
         output_reg_weights = box_pred.new_zeros(box_pred.shape)
+        output_id_target = box_pred.new_full([bs, num_pred], -1, dtype=torch.long)
         for i, (pred_idx, target_idx) in enumerate(indices):
-            if len(cls_target[i]) == 0:
+            if len(cls_gt[i]) == 0:
                 continue
-            output_cls_target[i, pred_idx] = cls_target[i][target_idx]
+            output_cls_target[i, pred_idx] = cls_gt[i][target_idx]
             output_box_target[i, pred_idx] = box_target[i][target_idx]
             output_reg_weights[i, pred_idx] = instance_reg_weights[i][
                 target_idx
             ]
-        return output_cls_target, output_box_target, output_reg_weights
+            output_id_target[i, pred_idx] = id_gt[i][target_idx]
+        return output_cls_target, output_box_target, output_reg_weights, output_id_target
 
     def _cls_cost(self, cls_pred, cls_target):
         bs = cls_pred.shape[0]

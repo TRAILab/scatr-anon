@@ -98,8 +98,17 @@ train_pipeline = [
             "gt_labels_3d",
             "instance_inds",
         ],
-        meta_keys=["lidar2global", "timestamp",
-                   "sample_idx", "scene_token", "lidar_path"],
+        meta_keys=[
+            "lidar2global", 
+            "timestamp", 
+            "sample_idx",
+            "scene_token",
+            "lidar_path"
+            # check aug params
+            "pcd_rotation_angle", 
+            "pcd_trans", 
+            "pcd_scale_factor",
+        ],
     ),
 ]
 

@@ -121,6 +121,9 @@ class Sparse4D(MVXTwoStageDetector):
     def loss(self, batch_inputs_dict: Dict,
              batch_data_samples: List[Det3DDataSample],
              **kwargs) -> List[Det3DDataSample]:
+        # print([batch_data_samples[0].metainfo[x] for x in ["scene_token", "pcd_rotation_angle", "pcd_trans", "pcd_scale_factor"]])
+        # print([batch_data_samples[1].metainfo[x] for x in ["scene_token", "pcd_rotation_angle", "pcd_trans", "pcd_scale_factor"]])
+        # breakpoint()
         batch_input_metas = [item.metainfo for item in batch_data_samples]
 
         # extract features

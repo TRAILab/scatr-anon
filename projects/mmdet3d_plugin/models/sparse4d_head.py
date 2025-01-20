@@ -731,6 +731,14 @@ class Sparse4DHead(BaseModule):
             }
         )
 
+        if not self.training:
+            # assign instance_inds to all predictions for inference
+            instance_inds = self.instance_bank.get_instance_ind(
+                cls, anchor, self.decoder.score_threshold
+            )
+            output["instance_inds"] = instance_inds
+        else:
+            output["instance_inds"] = None
         # cache current instances for temporal modeling
         self.instance_bank.cache(
             instance_feature,
@@ -738,18 +746,15 @@ class Sparse4DHead(BaseModule):
             cls,
             timestamp,
             [x["lidar2global"] for x in batch_metas],
-            feature_maps
+            output["instance_inds"]
         )
-        if not self.training:
-            instance_inds = self.instance_bank.get_instance_ind(
-                cls, anchor, self.decoder.score_threshold
-            )
-            output["instance_inds"] = instance_inds
         return output
 
     def loss(self, model_outs, batch_data_samples):
         gt_cls = [bs.gt_instances_3d.labels_3d for bs in batch_data_samples]
         gt_reg = [bs.gt_instances_3d.bboxes_3d for bs in batch_data_samples]
+        gt_id = [bs.gt_instances_3d.instance_inds for bs in batch_data_samples]
+        num_gt = [len(x) for x in gt_cls]
         # ===================== prediction losses ======================
         cls_scores = model_outs["classification"]
         reg_preds = model_outs["prediction"]
@@ -758,16 +763,17 @@ class Sparse4DHead(BaseModule):
         for decoder_idx, (cls, reg, qt) in enumerate(
             zip(cls_scores, reg_preds, quality)
         ):
+            # TODO move code in this for loop to a separate function
             reg = reg[..., : len(self.reg_weights)]
-            cls_target, reg_target, reg_weights = self.sampler.sample(
+            cls_target, reg_target, reg_weights, id_target = self.sampler.sample(
                 cls,
                 reg,
                 gt_cls,
                 gt_reg,
+                gt_id
             )
             reg_target = reg_target[..., : len(self.reg_weights)]
             mask = torch.logical_not(torch.all(reg_target == 0, dim=-1))
-            mask_valid = mask.clone()
 
             num_pos = max(
                 reduce_mean(torch.sum(mask).to(dtype=reg.dtype)), 1.0
@@ -778,9 +784,9 @@ class Sparse4DHead(BaseModule):
                     mask, cls.max(dim=-1).values.sigmoid() > threshold
                 )
 
-            cls = cls.flatten(end_dim=1)
+            cls_flattened = cls.flatten(end_dim=1)
             cls_target = cls_target.flatten(end_dim=1)
-            cls_loss = self.loss_cls(cls, cls_target, avg_factor=num_pos)
+            cls_loss = self.loss_cls(cls_flattened, cls_target, avg_factor=num_pos)
 
             mask = mask.reshape(-1)
             reg_weights = reg_weights * reg.new_tensor(self.reg_weights)
@@ -807,6 +813,33 @@ class Sparse4DHead(BaseModule):
             output[f"loss_cls_{decoder_idx}"] = cls_loss
             output.update(reg_loss)
 
+            # compute metrics for query consistency
+            qc_metrics = []
+            prev_instance_inds = self.instance_bank.instance_inds
+            if prev_instance_inds is None:
+                prev_instance_inds = [None for i in range(cls.shape[0])]
+            else:
+                # if not mask, set to None
+                prev_instance_inds = [
+                    prev_instance_inds[bs] if self.instance_bank.mask[bs] else None 
+                    for bs in range(cls.shape[0])
+                ]
+            confidences = cls.max(dim=-1).values.sigmoid()
+            for bs, (gt_id_i, conf_i, id_target_i, prev_instance_inds_i) in enumerate(zip(gt_id, confidences, id_target, prev_instance_inds)):
+                qc_metrics.append(self.compute_qc_metrics(gt_id_i, conf_i, id_target_i, prev_instance_inds_i))
+            for key in qc_metrics[0].keys():
+                val = [x[key] for x in qc_metrics]
+                val = torch.stack(val).nanmean() # account for nan entries
+                if not val.isnan():
+                    # add decoder suffix to qc metrics
+                    output["qc_metrics/"+key+f"_{decoder_idx}"] = val
+
+        # for the final layer, cache the id_target for the next timestep
+        # assuming non-zero decoder layers
+        bs, k = self.instance_bank.cached_indices.shape
+        batch_indices = torch.arange(bs, device=id_target.device).unsqueeze(-1).expand(-1, k)
+        # cache id target to intsance_inds for the next timestep
+        self.instance_bank.instance_inds = id_target[batch_indices, self.instance_bank.cached_indices]
         if "dn_prediction" not in model_outs:
             return output
 
@@ -855,6 +888,71 @@ class Sparse4DHead(BaseModule):
             output[f"loss_cls_dn_{decoder_idx}"] = cls_loss
             output.update(reg_loss)
         return output
+
+    def compute_qc_metrics(self, gt_id, conf, id_target, prev_instance_inds=None):
+        if prev_instance_inds is not None:
+            num_temp_instances = self.instance_bank.num_temp_instances
+        else:
+            num_temp_instances = 0
+        tq_conf, pq_conf = conf[:num_temp_instances], conf[num_temp_instances:]
+        tq_id_target, pq_id_target = id_target[:num_temp_instances], id_target[num_temp_instances:]
+        # num_gt = gt_id.shape[0] # for debugging purposes
+
+        if prev_instance_inds is not None:
+            # Convert instance_inds to a tensor and filter out -1 values
+            valid_prev_instance_inds = prev_instance_inds[prev_instance_inds != -1]
+            # how does this work with different batch sizes, num gt?
+        else:
+            valid_prev_instance_inds = torch.empty((conf.shape[0], 0), dtype=torch.long, device=conf.device)
+
+        # Create a mask for which pq were in prev frame
+        prev_pq_mask = torch.zeros_like(pq_id_target, dtype=torch.bool) # (num_pq)
+        prev_pq_mask = torch.isin(pq_id_target, valid_prev_instance_inds)
+
+        # Create a mask for current IDs, check not -1
+        pos_pq_mask = pq_id_target != -1
+
+        # Newborn mask is true where the pq pred is pos in curr but not in prev_mask
+        newborn_mask = pos_pq_mask & ~prev_pq_mask
+        # pq_tp is true when the pq is assigned (!=-1) and it is a newborn gt (not in prev frame)
+        pq_tp = newborn_mask.sum()
+        # pq_fp: pq assigned but it is not a newborn gt (it was a prev tracked obj)
+        pq_fp = pos_pq_mask.sum() - pq_tp
+        # pq_fn: a newborn gt that was assigned to a tq, not a hinderance to query consistency, ignore
+        metric_dict = dict(
+            pq_tp_conf=pq_conf[newborn_mask].mean(),
+            pq_fp_conf=pq_conf[pos_pq_mask & prev_pq_mask].mean(),
+            pq_neg_conf=pq_conf[~pos_pq_mask].mean(),
+            pq_precision=pq_tp/(pq_tp+pq_fp), # of the total pos pq predictions, how many were actual newborn obj
+        )
+        if num_temp_instances > 0:
+            pos_tq_mask = tq_id_target != -1
+            # tq_tp: tq assigned (!=-1) and it was the same previously tracked obj
+            tq_tp_mask = (tq_id_target == prev_instance_inds) & pos_tq_mask
+            tq_tp = tq_tp_mask.sum()
+            # tq_fp: tq assigned (!=-1) and it was a newborn gt OR it was a different gt
+            tq_fp_mask = pos_tq_mask & (tq_id_target != prev_instance_inds)
+            tq_fp = tq_fp_mask.sum()
+            # tq_fn: the gt is in current frame but not assigned to the same TQ
+            tq_fn_mask = torch.isin(prev_instance_inds, gt_id) & ~tq_tp_mask
+            tq_fn = tq_fn_mask.sum()
+            metric_dict.update(
+                tq_tp_conf=tq_conf[tq_tp_mask].mean(),
+                tq_fp_conf=tq_conf[tq_fp_mask].mean(),
+                tq_fn_conf=tq_conf[tq_fn_mask].mean(),
+                tq_precision=tq_tp/(tq_tp+tq_fp), # of the total pos tq predictions, how many were actual prev tracked obj
+                tq_recall=tq_tp/(tq_tp+tq_fn), # of the total tracked obj that are also in current frame, how many maintained query consistency
+            )
+        else:
+            metric_dict.update(
+                tq_tp_conf=torch.tensor(torch.nan),
+                tq_fp_conf=torch.tensor(torch.nan),
+                tq_fn_conf=torch.tensor(torch.nan),
+                tq_precision=torch.tensor(torch.nan),
+                tq_recall=torch.tensor(torch.nan),
+            )
+        # compute tq 
+        return metric_dict
 
     def prepare_for_dn_loss(self, model_outs, prefix=""):
         dn_valid_mask = model_outs[f"{prefix}dn_valid_mask"].flatten(end_dim=1)

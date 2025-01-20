@@ -12,12 +12,13 @@ __all__ = ["InstanceBank"]
 def topk(confidence, k, *inputs):
     bs, N = confidence.shape[:2]
     confidence, indices = torch.topk(confidence, k, dim=1)
-    indices = (
-        indices + torch.arange(bs, device=indices.device)[:, None] * N
-    ).reshape(-1)
+    # create batch index tensor, (bs, k) to match shape of indices
+    batch_indices = torch.arange(bs, device=indices.device).unsqueeze(-1).expand(-1, k)
+
     outputs = []
     for input in inputs:
-        outputs.append(input.flatten(end_dim=1)[indices].reshape(bs, k, -1))
+        selected_elements = input[batch_indices, indices] # (bs, k, ...)
+        outputs.append(selected_elements)
     return confidence, outputs, indices  # Return indices as well
 
 
@@ -96,6 +97,7 @@ class InstanceBank(nn.Module):
             history_time = self.history_time
             time_interval = timestamp - history_time
             time_interval = time_interval.to(dtype=instance_feature.dtype, device=instance_feature.device)
+            # mask of which instances in the batch are within the max time interval
             self.mask = torch.abs(time_interval) <= self.max_time_interval
 
             if self.anchor_handler is not None:
@@ -157,22 +159,28 @@ class InstanceBank(nn.Module):
             anchor = anchor[:, : self.num_anchor]
             confidence = confidence[:, : self.num_anchor]
 
+        # take the topk instances with highest confidence
         N = self.num_anchor - self.num_temp_instances
         confidence = confidence.max(dim=-1).values
         _, (selected_feature, selected_anchor), _ = topk(
             confidence, N, instance_feature, anchor
         )
+        # concatenate with cached queries (TQ)
         selected_feature = torch.cat(
             [self.cached_feature, selected_feature], dim=1
         )
         selected_anchor = torch.cat(
             [self.cached_anchor, selected_anchor], dim=1
         )
+        # mask determines which items in the batch should be updated with selected_feature.
+        # otherwise, if mask is False, the item should be updated with the original feature.
         instance_feature = torch.where(
             self.mask[:, None, None], selected_feature, instance_feature
         )
         anchor = torch.where(self.mask[:, None, None], selected_anchor, anchor)
+        # update instance_inds with new instances
         if self.instance_inds is not None:
+            # wipe the stored memory based on self.mask (determined by difference in timestamp)
             self.instance_inds = torch.where(
                 self.mask[:, None],
                 self.instance_inds,
@@ -193,7 +201,7 @@ class InstanceBank(nn.Module):
         confidence,
         timestamp,
         batch_history_T_global,
-        feature_maps=None,
+        instance_inds=None,
     ):
         if self.num_temp_instances <= 0:
             return
@@ -218,6 +226,10 @@ class InstanceBank(nn.Module):
             (self.cached_feature, self.cached_anchor),
             self.cached_indices,
         ) = topk(confidence, self.num_temp_instances, instance_feature, anchor)
+        # 
+        if self.num_temp_instances > 0 and instance_inds is not None:
+            # cache instance_inds for the next frame
+            self.update_instance_inds(instance_inds, confidence, self.cached_indices)
 
     def get_instance_ind(self, confidence, anchor=None, threshold=None):
         # convert class prediction to confidence
@@ -226,7 +238,7 @@ class InstanceBank(nn.Module):
         instance_inds = confidence.new_full(confidence.shape, -1).long()
 
         if (
-            self.instance_inds is not None
+            self.instance_inds is not None # not first frame of training
             and self.instance_inds.shape[0] == instance_inds.shape[0]
         ):
             # expect both past inds and new inds to have the same shape
@@ -245,12 +257,10 @@ class InstanceBank(nn.Module):
         new_ids = torch.arange(num_new_instance).to(instance_inds) + self.prev_id
         instance_inds[torch.where(mask)] = new_ids
         self.prev_id += num_new_instance
-        # 
-        if self.num_temp_instances > 0:
-            self.update_instance_inds(instance_inds, confidence)
         return instance_inds
 
-    def update_instance_inds(self, instance_inds=None, confidence=None):
+    def update_instance_inds(self, instance_inds, confidence, topk_indices=None):
+        """Prepare self.instance_inds for the next frame, appending 300 new instances of value -1 to the end (for the PQ)"""
         if self.temp_confidence is None:
             if confidence.dim() == 3:  # bs, num_anchor, num_cls
                 temp_conf = confidence.max(dim=-1).values
@@ -259,8 +269,14 @@ class InstanceBank(nn.Module):
         else:
             temp_conf = self.temp_confidence
         # take top-k instances with highest confidence
-        _, instance_inds, _  = topk(temp_conf, self.num_temp_instances, instance_inds)[0]
-        instance_inds = instance_inds.squeeze(dim=-1)
+        if topk_indices is None:
+            _, instance_inds, _  = topk(temp_conf, self.num_temp_instances, instance_inds)
+            instance_inds = instance_inds[0]
+            instance_inds = instance_inds.squeeze(dim=-1)
+        else:
+            bs, k = topk_indices.shape
+            batch_indices = torch.arange(bs, device=instance_inds.device).unsqueeze(-1).expand(-1, k)
+            instance_inds = instance_inds[batch_indices, topk_indices]
         # pad with -1 on the end
         self.instance_inds = F.pad(
             instance_inds,
