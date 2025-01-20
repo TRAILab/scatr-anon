@@ -944,12 +944,13 @@ class Sparse4DHead(BaseModule):
                 tq_recall=tq_tp/(tq_tp+tq_fn), # of the total tracked obj that are also in current frame, how many maintained query consistency
             )
         else:
+            device = pq_conf.device
             metric_dict.update(
-                tq_tp_conf=torch.tensor(torch.nan),
-                tq_fp_conf=torch.tensor(torch.nan),
-                tq_fn_conf=torch.tensor(torch.nan),
-                tq_precision=torch.tensor(torch.nan),
-                tq_recall=torch.tensor(torch.nan),
+                tq_tp_conf=torch.tensor(torch.nan, device=device),
+                tq_fp_conf=torch.tensor(torch.nan, device=device),
+                tq_fn_conf=torch.tensor(torch.nan, device=device),
+                tq_precision=torch.tensor(torch.nan, device=device),
+                tq_recall=torch.tensor(torch.nan, device=device),
             )
         # compute tq 
         return metric_dict
