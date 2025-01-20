@@ -18,7 +18,7 @@ def topk(confidence, k, *inputs):
     outputs = []
     for input in inputs:
         outputs.append(input.flatten(end_dim=1)[indices].reshape(bs, k, -1))
-    return confidence, outputs
+    return confidence, outputs, indices  # Return indices as well
 
 
 @MODELS.register_module()
@@ -78,6 +78,7 @@ class InstanceBank(nn.Module):
         self.mask = None
         self.confidence = None
         self.temp_confidence = None
+        self.cached_indices = None
         self.instance_inds = None
         self.prev_id = 0
 
@@ -158,7 +159,7 @@ class InstanceBank(nn.Module):
 
         N = self.num_anchor - self.num_temp_instances
         confidence = confidence.max(dim=-1).values
-        _, (selected_feature, selected_anchor) = topk(
+        _, (selected_feature, selected_anchor), _ = topk(
             confidence, N, instance_feature, anchor
         )
         selected_feature = torch.cat(
@@ -205,6 +206,7 @@ class InstanceBank(nn.Module):
         self.history_T_global = batch_history_T_global
         confidence = confidence.max(dim=-1).values.sigmoid()
         if self.confidence is not None:
+            # update confidence with decay
             confidence[:, : self.num_temp_instances] = torch.maximum(
                 self.confidence * self.confidence_decay,
                 confidence[:, : self.num_temp_instances],
@@ -214,6 +216,7 @@ class InstanceBank(nn.Module):
         (
             self.confidence,
             (self.cached_feature, self.cached_anchor),
+            self.cached_indices,
         ) = topk(confidence, self.num_temp_instances, instance_feature, anchor)
 
     def get_instance_ind(self, confidence, anchor=None, threshold=None):
@@ -256,9 +259,7 @@ class InstanceBank(nn.Module):
         else:
             temp_conf = self.temp_confidence
         # take top-k instances with highest confidence
-        instance_inds = topk(temp_conf, self.num_temp_instances, instance_inds)[1][
-            0
-        ]
+        _, instance_inds, _  = topk(temp_conf, self.num_temp_instances, instance_inds)[0]
         instance_inds = instance_inds.squeeze(dim=-1)
         # pad with -1 on the end
         self.instance_inds = F.pad(
