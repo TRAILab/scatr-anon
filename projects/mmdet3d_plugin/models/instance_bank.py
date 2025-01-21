@@ -80,7 +80,8 @@ class InstanceBank(nn.Module):
         self.confidence = None
         self.temp_confidence = None
         self.cached_indices = None
-        self.instance_inds = None
+        self.instance_inds_inference = None
+        self.instance_inds_training = None
         self.prev_id = 0
 
     def get(self, batch_size, timestamp, batched_global2lidar, dn_metas=None):
@@ -179,12 +180,12 @@ class InstanceBank(nn.Module):
         )
         anchor = torch.where(self.mask[:, None, None], selected_anchor, anchor)
         # update instance_inds with new instances
-        if self.instance_inds is not None:
+        if self.instance_inds_inference is not None:
             # wipe the stored memory based on self.mask (determined by difference in timestamp)
-            self.instance_inds = torch.where(
+            self.instance_inds_inference = torch.where(
                 self.mask[:, None],
-                self.instance_inds,
-                self.instance_inds.new_tensor(-1),
+                self.instance_inds_inference,
+                self.instance_inds_inference.new_tensor(-1),
             )
 
         if num_dn > 0:
@@ -238,15 +239,15 @@ class InstanceBank(nn.Module):
         instance_inds = confidence.new_full(confidence.shape, -1).long()
 
         if (
-            self.instance_inds is not None # not first frame of training
-            and self.instance_inds.shape[0] == instance_inds.shape[0]
+            self.instance_inds_inference is not None # not first frame of training
+            and self.instance_inds_inference.shape[0] == instance_inds.shape[0]
         ):
             # expect both past inds and new inds to have the same shape
-            assert self.instance_inds.shape[1] == instance_inds.shape[1], (
-                self.instance_inds.shape,
+            assert self.instance_inds_inference.shape[1] == instance_inds.shape[1], (
+                self.instance_inds_inference.shape,
                 instance_inds.shape,
             )
-            instance_inds[:, : self.instance_inds.shape[1]] = self.instance_inds
+            instance_inds[:, : self.instance_inds_inference.shape[1]] = self.instance_inds_inference
         # for instances with no ID
         mask = instance_inds < 0
         # for instances with confidence above threshold
@@ -278,7 +279,7 @@ class InstanceBank(nn.Module):
             batch_indices = torch.arange(bs, device=instance_inds.device).unsqueeze(-1).expand(-1, k)
             instance_inds = instance_inds[batch_indices, topk_indices]
         # pad with -1 on the end
-        self.instance_inds = F.pad(
+        self.instance_inds_inference = F.pad(
             instance_inds,
             (0, self.num_anchor - self.num_temp_instances),
             value=-1,
