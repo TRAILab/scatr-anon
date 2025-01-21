@@ -50,6 +50,7 @@ class Sparse4DHead(BaseModule):
         dn_loss_weight: float = 5.0,
         decouple_attn: bool = True,
         init_cfg: Optional[Dict] = None,
+        supervise_qc: bool = False,
         **kwargs,
     ):
         super(Sparse4DHead, self).__init__(init_cfg)
@@ -123,7 +124,8 @@ class Sparse4DHead(BaseModule):
             if extra_feat:
                 assert self.multistage_heatmap, "extra_feat must be used with multistage_heatmap"
             # gen_sineembed_for_position uses dim=128 for each x and y
-            self.pos_embed_learned = MLP(128*2, self.embed_dims, self.embed_dims, 2)
+            self.pos_embed_learned = MLP(
+                128*2, self.embed_dims, self.embed_dims, 2)
             # X-min, Y-min, Z-min, X-max, Y-max, Z-max
             # used for normalizing anchor to be [0, 1] for reference_points
             self.point_cloud_range = torch.nn.Parameter(
@@ -133,13 +135,13 @@ class Sparse4DHead(BaseModule):
             self.use_bevpos_emb = use_bevpos_emb
             self.bev_pos = self.create_2D_grid(*xy_size)
             self.dconv = ConvModule(
-                self.embed_dims, self.embed_dims, 
+                self.embed_dims, self.embed_dims,
                 stride=2, kernel_size=3, padding=1,
                 conv_cfg=dict(type='Conv2d'),
                 norm_cfg=dict(type='BN2d'),
             )
             self.dconv2 = ConvModule(
-                self.embed_dims, self.embed_dims, 
+                self.embed_dims, self.embed_dims,
                 stride=2, kernel_size=3, padding=1,
                 conv_cfg=dict(type='Conv2d'),
                 norm_cfg=dict(type='BN2d'),
@@ -261,7 +263,7 @@ class Sparse4DHead(BaseModule):
             if isinstance(pts_inputs[1], (list, tuple)):
                 # if using extra_feat
                 new_lidar_feat = pts_inputs[1][-1]
-            else: # no extra_feat
+            else:  # no extra_feat
                 new_lidar_feat = pts_inputs[1]
             lidar_feat_flatten = new_lidar_feat.view(
                 *lidar_feat_flatten.shape)
@@ -271,7 +273,7 @@ class Sparse4DHead(BaseModule):
                     new_lidar_feat.view(lidar_feat.shape))  # [BS, num_classes, H, W]
                 # average both heatmaps
                 heatmap = (dense_heatmap.detach().sigmoid() +
-                        dense_heatmap_img.detach().sigmoid()) / 2
+                           dense_heatmap_img.detach().sigmoid()) / 2
 
                 if self.use_camera or self.iterbev_wo_img:
                     heatmap_train = [dense_heatmap, dense_heatmap_img]
@@ -284,7 +286,7 @@ class Sparse4DHead(BaseModule):
                 local_max_inner = F.max_pool2d(
                     heatmap, kernel_size=self.nms_kernel_size, stride=1, padding=0)
                 local_max[:, :, padding:(-padding),
-                        padding:(-padding)] = local_max_inner
+                          padding:(-padding)] = local_max_inner
                 # for Pedestrian & Traffic_cone in nuScenes
                 if self.test_cfg['dataset'] == 'nuScenes':
                     local_max[:, 8, ] = F.max_pool2d(
@@ -319,7 +321,7 @@ class Sparse4DHead(BaseModule):
                     0, 2, 1).expand(-1, -1, bev_pos.shape[-1]), dim=1)
                 query_heatmap_score = heatmap.gather(
                     index=top_proposals_index[:, None, :].expand(-1, self.num_classes, -1), dim=-1)
-        elif self.use_lidar: # multistage_heatmap, capture hard FN
+        elif self.use_lidar:  # multistage_heatmap, capture hard FN
             dense_heatmap = self.heatmap_head(lidar_feat)  # original
 
             multistage_feats = pts_inputs[1]
@@ -485,7 +487,7 @@ class Sparse4DHead(BaseModule):
                 bev_reference_points = bev_pos / \
                     torch.flip(spatial_shapes[:1], dims=(1,))[:, None]
                 bev_sine_pos = gen_sineembed_for_position(
-                    bev_reference_points[:, :, :2]) # B, total num bev_poses, self.embed_dims
+                    bev_reference_points[:, :, :2])  # B, total num bev_poses, self.embed_dims
                 bev_pos_embed = self.pos_embed_learned(
                     bev_sine_pos)  # bs, nq, 256
                 # TODO( multiple addition for bev pos embedding )
@@ -613,7 +615,8 @@ class Sparse4DHead(BaseModule):
             elif op == "deformable_lidar":
                 # normalize anchor to [0, 1] to get reference_points
                 reference_points = anchor[..., :2]
-                reference_points = (reference_points - self.point_cloud_range[:2].to(reference_points.device)) / self.ref_point_norm[:2].to(reference_points.device)
+                reference_points = (reference_points - self.point_cloud_range[:2].to(
+                    reference_points.device)) / self.ref_point_norm[:2].to(reference_points.device)
                 reference_points = reference_points.clamp(0, 1)
                 # expand reference_points to match the shape of valid ratios, see mmdet DeformableDetrTransformerDecoder
                 reference_points_input = \
@@ -627,7 +630,8 @@ class Sparse4DHead(BaseModule):
                     reference_points=reference_points_input,  # B N num_levels 2
                     **MSDA_kwargs,)
                 # follow DeformableFeatureAggregation, concat the output
-                instance_feature = torch.cat([instance_feature, output], dim=-1)
+                instance_feature = torch.cat(
+                    [instance_feature, output], dim=-1)
             elif op == "refine":
                 anchor, cls, qt = self.layers[i](
                     instance_feature,
@@ -786,7 +790,8 @@ class Sparse4DHead(BaseModule):
 
             cls_flattened = cls.flatten(end_dim=1)
             cls_target = cls_target.flatten(end_dim=1)
-            cls_loss = self.loss_cls(cls_flattened, cls_target, avg_factor=num_pos)
+            cls_loss = self.loss_cls(
+                cls_flattened, cls_target, avg_factor=num_pos)
 
             mask = mask.reshape(-1)
             reg_weights = reg_weights * reg.new_tensor(self.reg_weights)
@@ -821,15 +826,16 @@ class Sparse4DHead(BaseModule):
             else:
                 # if not mask, set to None
                 prev_instance_inds = [
-                    prev_instance_inds[bs] if self.instance_bank.mask[bs] else None 
+                    prev_instance_inds[bs] if self.instance_bank.mask[bs] else None
                     for bs in range(cls.shape[0])
                 ]
             confidences = cls.max(dim=-1).values.sigmoid()
             for bs, (gt_id_i, conf_i, id_target_i, prev_instance_inds_i) in enumerate(zip(gt_id, confidences, id_target, prev_instance_inds)):
-                qc_metrics.append(self.compute_qc_metrics(gt_id_i, conf_i, id_target_i, prev_instance_inds_i))
+                qc_metrics.append(self.compute_qc_metrics(
+                    gt_id_i, conf_i, id_target_i, prev_instance_inds_i))
             for key in qc_metrics[0].keys():
                 val = [x[key] for x in qc_metrics]
-                val = torch.stack(val).nanmean() # account for nan entries
+                val = torch.stack(val).nanmean()  # account for nan entries
                 if not val.isnan():
                     # add decoder suffix to qc metrics
                     output["qc_metrics/"+key+f"_{decoder_idx}"] = val
@@ -837,9 +843,11 @@ class Sparse4DHead(BaseModule):
         # for the final layer, cache the id_target for the next timestep
         # assuming non-zero decoder layers
         bs, k = self.instance_bank.cached_indices.shape
-        batch_indices = torch.arange(bs, device=id_target.device).unsqueeze(-1).expand(-1, k)
+        batch_indices = torch.arange(
+            bs, device=id_target.device).unsqueeze(-1).expand(-1, k)
         # cache id target to intsance_inds for the next timestep
-        self.instance_bank.instance_inds = id_target[batch_indices, self.instance_bank.cached_indices]
+        self.instance_bank.instance_inds = id_target[batch_indices,
+                                                     self.instance_bank.cached_indices]
         if "dn_prediction" not in model_outs:
             return output
 
@@ -895,7 +903,8 @@ class Sparse4DHead(BaseModule):
         else:
             num_temp_instances = 0
         tq_conf, pq_conf = conf[:num_temp_instances], conf[num_temp_instances:]
-        tq_id_target, pq_id_target = id_target[:num_temp_instances], id_target[num_temp_instances:]
+        tq_id_target, pq_id_target = id_target[:
+                                               num_temp_instances], id_target[num_temp_instances:]
         # num_gt = gt_id.shape[0] # for debugging purposes
 
         if prev_instance_inds is not None:
@@ -903,10 +912,12 @@ class Sparse4DHead(BaseModule):
             valid_prev_instance_inds = prev_instance_inds[prev_instance_inds != -1]
             # how does this work with different batch sizes, num gt?
         else:
-            valid_prev_instance_inds = torch.empty((conf.shape[0], 0), dtype=torch.long, device=conf.device)
+            valid_prev_instance_inds = torch.empty(
+                (conf.shape[0], 0), dtype=torch.long, device=conf.device)
 
         # Create a mask for which pq were in prev frame
-        prev_pq_mask = torch.zeros_like(pq_id_target, dtype=torch.bool) # (num_pq)
+        prev_pq_mask = torch.zeros_like(
+            pq_id_target, dtype=torch.bool)  # (num_pq)
         prev_pq_mask = torch.isin(pq_id_target, valid_prev_instance_inds)
 
         # Create a mask for current IDs, check not -1
@@ -923,7 +934,8 @@ class Sparse4DHead(BaseModule):
             pq_tp_conf=pq_conf[newborn_mask].mean(),
             pq_fp_conf=pq_conf[pos_pq_mask & prev_pq_mask].mean(),
             pq_neg_conf=pq_conf[~pos_pq_mask].mean(),
-            pq_precision=pq_tp/(pq_tp+pq_fp), # of the total pos pq predictions, how many were actual newborn obj
+            # of the total pos pq predictions, how many were actual newborn obj
+            pq_precision=pq_tp/(pq_tp+pq_fp),
         )
         if num_temp_instances > 0:
             pos_tq_mask = tq_id_target != -1
@@ -940,8 +952,10 @@ class Sparse4DHead(BaseModule):
                 tq_tp_conf=tq_conf[tq_tp_mask].mean(),
                 tq_fp_conf=tq_conf[tq_fp_mask].mean(),
                 tq_fn_conf=tq_conf[tq_fn_mask].mean(),
-                tq_precision=tq_tp/(tq_tp+tq_fp), # of the total pos tq predictions, how many were actual prev tracked obj
-                tq_recall=tq_tp/(tq_tp+tq_fn), # of the total tracked obj that are also in current frame, how many maintained query consistency
+                # of the total pos tq predictions, how many were actual prev tracked obj
+                tq_precision=tq_tp/(tq_tp+tq_fp),
+                # of the total tracked obj that are also in current frame, how many maintained query consistency
+                tq_recall=tq_tp/(tq_tp+tq_fn),
             )
         else:
             device = pq_conf.device
@@ -952,7 +966,6 @@ class Sparse4DHead(BaseModule):
                 tq_precision=torch.tensor(torch.nan, device=device),
                 tq_recall=torch.tensor(torch.nan, device=device),
             )
-        # compute tq 
         return metric_dict
 
     def prepare_for_dn_loss(self, model_outs, prefix=""):
