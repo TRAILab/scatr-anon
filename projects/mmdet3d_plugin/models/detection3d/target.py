@@ -56,7 +56,7 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
                     box.dims.log(),
                     torch.sin(box.yaw).unsqueeze(-1),
                     torch.cos(box.yaw).unsqueeze(-1),
-                    box.tensor[:, YAW+1:], # velocity vector
+                    box.tensor[:, YAW+1:],  # velocity vector
                 ],
                 dim=-1,
             )
@@ -111,7 +111,8 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
         )
         output_box_target = box_pred.new_zeros(box_pred.shape)
         output_reg_weights = box_pred.new_zeros(box_pred.shape)
-        output_id_target = box_pred.new_full([bs, num_pred], -1, dtype=torch.long)
+        output_id_target = box_pred.new_full(
+            [bs, num_pred], -1, dtype=torch.long)
         for i, (pred_idx, target_idx) in enumerate(indices):
             if len(cls_gt[i]) == 0:
                 continue
