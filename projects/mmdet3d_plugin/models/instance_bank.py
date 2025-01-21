@@ -13,11 +13,12 @@ def topk(confidence, k, *inputs):
     bs, N = confidence.shape[:2]
     confidence, indices = torch.topk(confidence, k, dim=1)
     # create batch index tensor, (bs, k) to match shape of indices
-    batch_indices = torch.arange(bs, device=indices.device).unsqueeze(-1).expand(-1, k)
+    batch_indices = torch.arange(
+        bs, device=indices.device).unsqueeze(-1).expand(-1, k)
 
     outputs = []
     for input in inputs:
-        selected_elements = input[batch_indices, indices] # (bs, k, ...)
+        selected_elements = input[batch_indices, indices]  # (bs, k, ...)
         outputs.append(selected_elements)
     return confidence, outputs, indices  # Return indices as well
 
@@ -96,7 +97,8 @@ class InstanceBank(nn.Module):
             # history_time = self.metas["timestamp"]
             history_time = self.history_time
             time_interval = timestamp - history_time
-            time_interval = time_interval.to(dtype=instance_feature.dtype, device=instance_feature.device)
+            time_interval = time_interval.to(
+                dtype=instance_feature.dtype, device=instance_feature.device)
             # mask of which instances in the batch are within the max time interval
             self.mask = torch.abs(time_interval) <= self.max_time_interval
 
@@ -226,10 +228,10 @@ class InstanceBank(nn.Module):
             (self.cached_feature, self.cached_anchor),
             self.cached_indices,
         ) = topk(confidence, self.num_temp_instances, instance_feature, anchor)
-        # 
         if self.num_temp_instances > 0 and instance_inds is not None:
             # cache instance_inds for the next frame
-            self.update_instance_inds(instance_inds, confidence, self.cached_indices)
+            self.update_instance_inds(
+                instance_inds, confidence, self.cached_indices)
 
     def get_instance_ind(self, confidence, anchor=None, threshold=None):
         # convert class prediction to confidence
@@ -238,7 +240,7 @@ class InstanceBank(nn.Module):
         instance_inds = confidence.new_full(confidence.shape, -1).long()
 
         if (
-            self.instance_inds is not None # not first frame of training
+            self.instance_inds is not None  # not first frame of training
             and self.instance_inds.shape[0] == instance_inds.shape[0]
         ):
             # expect both past inds and new inds to have the same shape
@@ -246,7 +248,8 @@ class InstanceBank(nn.Module):
                 self.instance_inds.shape,
                 instance_inds.shape,
             )
-            instance_inds[:, : self.instance_inds.shape[1]] = self.instance_inds
+            instance_inds[:, : self.instance_inds.shape[1]
+                          ] = self.instance_inds
         # for instances with no ID
         mask = instance_inds < 0
         # for instances with confidence above threshold
@@ -254,7 +257,8 @@ class InstanceBank(nn.Module):
             mask = mask & (confidence >= threshold)
         num_new_instance = mask.sum()
         # assign them new IDs
-        new_ids = torch.arange(num_new_instance).to(instance_inds) + self.prev_id
+        new_ids = torch.arange(num_new_instance).to(
+            instance_inds) + self.prev_id
         instance_inds[torch.where(mask)] = new_ids
         self.prev_id += num_new_instance
         return instance_inds
@@ -270,12 +274,14 @@ class InstanceBank(nn.Module):
             temp_conf = self.temp_confidence
         # take top-k instances with highest confidence
         if topk_indices is None:
-            _, instance_inds, _  = topk(temp_conf, self.num_temp_instances, instance_inds)
+            _, instance_inds, _ = topk(
+                temp_conf, self.num_temp_instances, instance_inds)
             instance_inds = instance_inds[0]
             instance_inds = instance_inds.squeeze(dim=-1)
         else:
             bs, k = topk_indices.shape
-            batch_indices = torch.arange(bs, device=instance_inds.device).unsqueeze(-1).expand(-1, k)
+            batch_indices = torch.arange(
+                bs, device=instance_inds.device).unsqueeze(-1).expand(-1, k)
             instance_inds = instance_inds[batch_indices, topk_indices]
         # pad with -1 on the end
         self.instance_inds = F.pad(
