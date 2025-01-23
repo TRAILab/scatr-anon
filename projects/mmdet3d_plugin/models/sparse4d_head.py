@@ -819,7 +819,7 @@ class Sparse4DHead(BaseModule):
 
             # compute metrics for query consistency
             qc_metrics = []
-            prev_instance_inds = self.instance_bank.instance_inds
+            prev_instance_inds = self.instance_bank.instance_inds_training
             if prev_instance_inds is None:
                 prev_instance_inds = [None for i in range(cls.shape[0])]
             else:
@@ -845,8 +845,7 @@ class Sparse4DHead(BaseModule):
         batch_indices = torch.arange(
             bs, device=id_target.device).unsqueeze(-1).expand(-1, k)
         # cache id target to intsance_inds for the next timestep
-        self.instance_bank.instance_inds = id_target[batch_indices,
-                                                     self.instance_bank.cached_indices]
+        self.instance_bank.instance_inds_training = id_target[batch_indices, self.instance_bank.cached_indices]
         if "dn_prediction" not in model_outs:
             return output
 
