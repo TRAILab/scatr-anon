@@ -50,7 +50,6 @@ class Sparse4DHead(BaseModule):
         dn_loss_weight: float = 5.0,
         decouple_attn: bool = True,
         init_cfg: Optional[Dict] = None,
-        supervise_qc: bool = False,
         **kwargs,
     ):
         super(Sparse4DHead, self).__init__(init_cfg)
