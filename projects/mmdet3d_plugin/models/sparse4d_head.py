@@ -625,6 +625,8 @@ class Sparse4DHead(BaseModule):
                     query=instance_feature,  # B x N x C
                     value=pos_lidar_feat_flatten.permute(
                         0, 2, 1),  # B C Pv -> B Pv C
+                    key=pos_lidar_feat_flatten.permute(  # only used by dense attn
+                        0, 2, 1),  # B C Pv -> B Pv C
                     query_pos=anchor_embed,  # B N C
                     reference_points=reference_points_input,  # B N num_levels 2
                     **MSDA_kwargs,)
