@@ -15,6 +15,7 @@ total_batch_size = batch_size * num_gpus
 input_shape = (704, 256)
 num_epochs = 12
 checkpoint_epoch_interval = 1
+val_epoch_interval = 1
 
 short_name = "lidar-full"
 work_dir = f"work_dirs/sparse4dv3-temporal_lidar_1x{num_gpus}_bs{batch_size}_{input_shape[1]}x{input_shape[0]}-{num_epochs}e_{short_name}"
@@ -122,7 +123,7 @@ param_scheduler = [
 train_cfg = dict(
     by_epoch=True,
     max_epochs=num_epochs,
-    val_interval=checkpoint_epoch_interval)
+    val_interval=val_epoch_interval)
 val_cfg = dict()
 test_cfg = dict()
 
