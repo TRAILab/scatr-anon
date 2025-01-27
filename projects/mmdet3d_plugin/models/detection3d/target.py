@@ -23,7 +23,7 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
         gamma=2,
         eps=1e-12,
         box_weight=0.25,
-        reg_weights=None,
+        reg_weights=[1.0] * 8 + [0.0] * 2,
         cls_wise_reg_weights={},
         num_dn_groups=0,
         dn_noise_scale=0.5,
@@ -41,8 +41,6 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
         self.gamma = gamma
         self.eps = eps
         self.reg_weights = reg_weights
-        if self.reg_weights is None:
-            self.reg_weights = [1.0] * 8 + [0.0] * 2
         self.cls_wise_reg_weights = cls_wise_reg_weights
         self.dn_noise_scale = dn_noise_scale
         self.max_dn_gt = max_dn_gt
