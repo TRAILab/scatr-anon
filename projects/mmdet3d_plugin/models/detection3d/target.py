@@ -125,20 +125,23 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
         """
         # construct targets
         num_preds, num_cls = cls_pred_act_i.shape
-        cls_target_i = cls_pred_act_i.new_full((num_preds,), num_cls, dtype=torch.long)
+        cls_target_i = cls_pred_act_i.new_full(
+            (num_preds,), num_cls, dtype=torch.long)
         box_target_i = box_pred_i.new_zeros(box_pred_i.shape)
         reg_weights_i = box_pred_i.new_zeros(box_pred_i.shape)
         id_target_i = box_pred_i.new_full((num_preds,), -1, dtype=torch.long)
-        
+
         # in the case of no gt objects to assign
         if len(cls_gt_i) == 0:
             return cls_target_i, box_target_i, reg_weights_i, id_target_i
 
         cls_cost_i = self._cls_cost_single(cls_pred_act_i, cls_gt_i)
-        
-        encoded_box_gt_i = self.encode_reg_target_single(box_gt_i, box_pred_i.device)
+
+        encoded_box_gt_i = self.encode_reg_target_single(
+            box_gt_i, box_pred_i.device)
         # compute the box cost weights
-        instance_reg_weights_i = torch.logical_not(encoded_box_gt_i.isnan()).to(dtype=encoded_box_gt_i.dtype)
+        instance_reg_weights_i = torch.logical_not(
+            encoded_box_gt_i.isnan()).to(dtype=encoded_box_gt_i.dtype)
         # set reg_weights by class
         # used to ignore orientation for traffic cones
         for class_label, weight in self.cls_wise_reg_weights.items():
@@ -147,7 +150,8 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
                 instance_reg_weights_i.new_tensor(weight),
                 instance_reg_weights_i,
             )
-        box_cost_i = self._box_cost_single(box_pred_i, encoded_box_gt_i, instance_reg_weights_i)
+        box_cost_i = self._box_cost_single(
+            box_pred_i, encoded_box_gt_i, instance_reg_weights_i)
 
         # perform hungarian matching based on costs
         cost = (cls_cost_i + box_cost_i).detach().cpu().numpy()
