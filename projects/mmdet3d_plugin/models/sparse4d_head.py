@@ -765,6 +765,16 @@ class Sparse4DHead(BaseModule):
         reg_preds = model_outs["prediction"]
         quality = model_outs["quality"]
         output = {}
+        prev_instance_inds = self.instance_bank.instance_inds_training
+        batch_size = len(gt_cls)
+        if prev_instance_inds is None:
+            prev_instance_inds = [None for i in range(batch_size)]
+        else:
+            # if not mask, set to None
+            prev_instance_inds = [
+                prev_instance_inds[bs] if self.instance_bank.mask[bs] else None
+                for bs in range(batch_size)
+            ]
         for decoder_idx, (cls, reg, qt) in enumerate(
             zip(cls_scores, reg_preds, quality)
         ):
@@ -775,7 +785,8 @@ class Sparse4DHead(BaseModule):
                 reg,
                 gt_cls,
                 gt_reg,
-                gt_id
+                gt_id,
+                prev_instance_inds, # only used when self.sampler.supervise_qc
             )
             reg_target = reg_target[..., : len(self.reg_weights)]
             mask = torch.logical_not(torch.all(reg_target == 0, dim=-1))
@@ -821,15 +832,7 @@ class Sparse4DHead(BaseModule):
 
             # compute metrics for query consistency
             qc_metrics = []
-            prev_instance_inds = self.instance_bank.instance_inds_training
-            if prev_instance_inds is None:
-                prev_instance_inds = [None for i in range(cls.shape[0])]
-            else:
-                # if not mask, set to None
-                prev_instance_inds = [
-                    prev_instance_inds[bs] if self.instance_bank.mask[bs] else None
-                    for bs in range(cls.shape[0])
-                ]
+
             confidences = cls.max(dim=-1).values.sigmoid()
             for bs, (gt_id_i, conf_i, id_target_i, prev_instance_inds_i) in enumerate(zip(gt_id, confidences, id_target, prev_instance_inds)):
                 qc_metrics.append(self.compute_qc_metrics(

@@ -24,12 +24,13 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
         eps=1e-12,
         box_weight=0.25,
         reg_weights=None,
-        cls_wise_reg_weights=None,
+        cls_wise_reg_weights={},
         num_dn_groups=0,
         dn_noise_scale=0.5,
         max_dn_gt=32,
         add_neg_dn=True,
         num_temp_dn_groups=0,
+        supervise_qc: bool = False,
     ):
         super(SparseBox3DTarget, self).__init__(
             num_dn_groups, num_temp_dn_groups
@@ -46,125 +47,154 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
         self.dn_noise_scale = dn_noise_scale
         self.max_dn_gt = max_dn_gt
         self.add_neg_dn = add_neg_dn
+        self.supervise_qc = supervise_qc  # supervise query consistency
 
     def encode_reg_target(self, box_target: List[LiDARInstance3DBoxes], device=None):
         outputs = []
         for box in box_target:
-            output = torch.cat(
-                [
-                    box.gravity_center,
-                    box.dims.log(),
-                    torch.sin(box.yaw).unsqueeze(-1),
-                    torch.cos(box.yaw).unsqueeze(-1),
-                    box.tensor[:, YAW+1:],  # velocity vector
-                ],
-                dim=-1,
-            )
-            if device is not None:
-                output = output.to(device=device)
+            output = self.encode_reg_target_single(box, device)
             outputs.append(output)
         return outputs
 
+    def encode_reg_target_single(self, box_target_i: LiDARInstance3DBoxes, device=None):
+        output = torch.cat(
+            [
+                box_target_i.gravity_center,
+                box_target_i.dims.log(),
+                torch.sin(box_target_i.yaw).unsqueeze(-1),
+                torch.cos(box_target_i.yaw).unsqueeze(-1),
+                box_target_i.tensor[:, YAW+1:],  # velocity vector
+            ],
+            dim=-1,
+        )
+        if device is not None:
+            output = output.to(device=device)
+        return output
+
     def sample(
-        self,
-        cls_pred,
-        box_pred,
-        cls_gt,
-        box_gt,
-        id_gt
+            self,
+            cls_pred,
+            box_pred,
+            cls_gt,
+            box_gt,
+            id_gt,
+            prev_inst_inds=None,
     ):
         bs, num_pred, num_cls = cls_pred.shape
-
-        cls_cost = self._cls_cost(cls_pred, cls_gt)
-
-        box_target = self.encode_reg_target(box_gt, box_pred.device)
-
-        instance_reg_weights = []
-        for i in range(len(box_target)):
-            weights = torch.logical_not(box_target[i].isnan()).to(
-                dtype=box_target[i].dtype
+        if prev_inst_inds is None:
+            prev_inst_inds = [None] * bs
+        cls_target = []
+        box_target = []
+        reg_weights = []
+        id_target = []
+        cls_pred_act = cls_pred.detach().sigmoid()
+        for batch_idx, (cls_pred_act_i, box_pred_i, cls_gt_i, box_gt_i, id_gt_i, prev_inst_inds_i) in enumerate(zip(
+            cls_pred_act, box_pred, cls_gt, box_gt, id_gt, prev_inst_inds
+        )):
+            cls_target_i, box_target_i, reg_weights_i, id_target_i = self.sample_single(
+                cls_pred_act_i.detach(),
+                box_pred_i.detach(),
+                cls_gt_i,
+                box_gt_i,
+                id_gt_i,
+                prev_inst_inds_i,
             )
-            if self.cls_wise_reg_weights is not None:
-                for cls, weight in self.cls_wise_reg_weights.items():
-                    weights = torch.where(
-                        (cls_gt[i] == cls)[:, None],
-                        weights.new_tensor(weight),
-                        weights,
-                    )
-            instance_reg_weights.append(weights)
-        box_cost = self._box_cost(box_pred, box_target, instance_reg_weights)
+            cls_target.append(cls_target_i)
+            box_target.append(box_target_i)
+            reg_weights.append(reg_weights_i)
+            id_target.append(id_target_i)
+        # stack to tensor along batch dimension
+        cls_target = torch.stack(cls_target)
+        box_target = torch.stack(box_target)
+        reg_weights = torch.stack(reg_weights)
+        id_target = torch.stack(id_target)
+        return cls_target, box_target, reg_weights, id_target
 
-        indices = []
-        for i in range(bs):
-            if cls_cost[i] is not None and box_cost[i] is not None:
-                cost = (cls_cost[i] + box_cost[i]).detach().cpu().numpy()
-                cost = np.where(np.isneginf(cost) | np.isnan(cost), 1e8, cost)
-                assign = linear_sum_assignment(cost)
-                indices.append(
-                    [cls_pred.new_tensor(x, dtype=torch.int64) for x in assign]
-                )
-            else:
-                indices.append([None, None])
+    def sample_single(
+            self,
+            cls_pred_act_i,
+            box_pred_i,
+            cls_gt_i,
+            box_gt_i,
+            id_gt_i,
+            prev_inst_inds_i=None,):
+        """
+        Sample targets for predictions in a single item from the batch.
+        Not batched.
+        (TODO) Replace match cost and assignment code with code from latest mmdet, cleaner
+        """
+        # construct targets
+        num_preds, num_cls = cls_pred_act_i.shape
+        cls_target_i = cls_pred_act_i.new_full((num_preds,), num_cls, dtype=torch.long)
+        box_target_i = box_pred_i.new_zeros(box_pred_i.shape)
+        reg_weights_i = box_pred_i.new_zeros(box_pred_i.shape)
+        id_target_i = box_pred_i.new_full((num_preds,), -1, dtype=torch.long)
+        
+        # in the case of no gt objects to assign
+        if len(cls_gt_i) == 0:
+            return cls_target_i, box_target_i, reg_weights_i, id_target_i
 
-        output_cls_target = (
-            cls_gt[0].new_ones([bs, num_pred], dtype=torch.long) * num_cls
+        cls_cost_i = self._cls_cost_single(cls_pred_act_i, cls_gt_i)
+        
+        encoded_box_gt_i = self.encode_reg_target_single(box_gt_i, box_pred_i.device)
+        # compute the box cost weights
+        instance_reg_weights_i = torch.logical_not(encoded_box_gt_i.isnan()).to(dtype=encoded_box_gt_i.dtype)
+        # set reg_weights by class
+        # used to ignore orientation for traffic cones
+        for class_label, weight in self.cls_wise_reg_weights.items():
+            instance_reg_weights_i = torch.where(
+                (cls_gt_i == class_label)[:, None],
+                instance_reg_weights_i.new_tensor(weight),
+                instance_reg_weights_i,
+            )
+        box_cost_i = self._box_cost_single(box_pred_i, encoded_box_gt_i, instance_reg_weights_i)
+
+        # perform hungarian matching based on costs
+        cost = (cls_cost_i + box_cost_i).detach().cpu().numpy()
+        cost = np.where(np.isneginf(cost) | np.isnan(cost), 1e8, cost)
+        pred_idx, target_idx = linear_sum_assignment(cost)
+        pred_idx = torch.from_numpy(pred_idx).to(dtype=torch.long)
+        target_idx = torch.from_numpy(target_idx).to(dtype=torch.long)
+
+        # insert gt based on assigned indices
+        cls_target_i[pred_idx] = cls_gt_i[target_idx]
+        box_target_i[pred_idx] = encoded_box_gt_i[target_idx]
+        reg_weights_i[pred_idx] = instance_reg_weights_i[target_idx]
+        id_target_i[pred_idx] = id_gt_i[target_idx]
+        return cls_target_i, box_target_i, reg_weights_i, id_target_i
+
+    def _cls_cost_single(self, cls_pred_act_i, cls_target_i):
+        """
+        Compute the class cost between the predicted and target classes.
+        Follows the focal loss formulation.
+        cls_pred_act is activated (sigmoid applied, range [0, 1])
+        """
+        eps = torch.finfo(cls_pred_act_i.dtype).eps
+        neg_cost = (
+            -(1 - cls_pred_act_i + eps).log()
+            * (1 - self.alpha)
+            * cls_pred_act_i.pow(self.gamma)
         )
-        output_box_target = box_pred.new_zeros(box_pred.shape)
-        output_reg_weights = box_pred.new_zeros(box_pred.shape)
-        output_id_target = box_pred.new_full(
-            [bs, num_pred], -1, dtype=torch.long)
-        for i, (pred_idx, target_idx) in enumerate(indices):
-            if len(cls_gt[i]) == 0:
-                continue
-            output_cls_target[i, pred_idx] = cls_gt[i][target_idx]
-            output_box_target[i, pred_idx] = box_target[i][target_idx]
-            output_reg_weights[i, pred_idx] = instance_reg_weights[i][
-                target_idx
-            ]
-            output_id_target[i, pred_idx] = id_gt[i][target_idx]
-        return output_cls_target, output_box_target, output_reg_weights, output_id_target
+        pos_cost = (
+            -(cls_pred_act_i + eps).log()
+            * self.alpha
+            * (1 - cls_pred_act_i).pow(self.gamma)
+        )
+        return (
+            (pos_cost[:, cls_target_i] - neg_cost[:, cls_target_i])
+            * self.cls_weight
+        )
 
-    def _cls_cost(self, cls_pred, cls_target):
-        bs = cls_pred.shape[0]
-        cls_pred = cls_pred.sigmoid()
-        cost = []
-        for i in range(bs):
-            if len(cls_target[i]) > 0:
-                neg_cost = (
-                    -(1 - cls_pred[i] + self.eps).log()
-                    * (1 - self.alpha)
-                    * cls_pred[i].pow(self.gamma)
-                )
-                pos_cost = (
-                    -(cls_pred[i] + self.eps).log()
-                    * self.alpha
-                    * (1 - cls_pred[i]).pow(self.gamma)
-                )
-                cost.append(
-                    (pos_cost[:, cls_target[i]] - neg_cost[:, cls_target[i]])
-                    * self.cls_weight
-                )
-            else:
-                cost.append(None)
-        return cost
-
-    def _box_cost(self, box_pred, box_target, instance_reg_weights):
-        bs = box_pred.shape[0]
-        cost = []
-        for i in range(bs):
-            if len(box_target[i]) > 0:
-                cost.append(
-                    torch.sum(
-                        torch.abs(box_pred[i, :, None] - box_target[i][None])
-                        * instance_reg_weights[i][None]
-                        * box_pred.new_tensor(self.reg_weights),
-                        dim=-1,
-                    )
-                    * self.box_weight
-                )
-            else:
-                cost.append(None)
-        return cost
+    def _box_cost_single(self, box_pred_i, box_target_i, instance_reg_weights_i):
+        """
+        Compute the box cost between the predicted and target boxes.
+        """
+        return torch.sum(
+            torch.abs(box_pred_i[:, None] - box_target_i[None])
+            * instance_reg_weights_i[None]
+            * box_pred_i.new_tensor(self.reg_weights),
+            dim=-1,
+        ) * self.box_weight
 
     def get_dn_anchors(self, cls_target, box_target, gt_instance_inds=None):
         if self.num_dn_groups <= 0:
