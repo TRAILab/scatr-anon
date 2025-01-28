@@ -14,6 +14,8 @@ from ..base_target import BaseTargetWithDenoising
 __all__ = ["SparseBox3DTarget"]
 
 UNTRACKED_ID = -1
+PAD_CLS_TARGET = -1
+NEG_DN_CLS_TARGET = -3
 
 @MODELS.register_module()
 class SparseBox3DTarget(BaseTargetWithDenoising):
@@ -303,9 +305,10 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
         max_dn_gt = max([len(x) for x in cls_target])
         if max_dn_gt == 0:
             return None
+        # pad to max_dn_gt
         cls_target = torch.stack(
             [
-                F.pad(x, (0, max_dn_gt - x.shape[0]), value=-1)
+                F.pad(x, (0, max_dn_gt - x.shape[0]), value=PAD_CLS_TARGET)
                 for x in cls_target
             ]
         )
@@ -314,7 +317,7 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
             [F.pad(x, (0, 0, 0, max_dn_gt - x.shape[0])) for x in box_target]
         )
         box_target = torch.where(
-            cls_target[..., None] == -1, box_target.new_tensor(0), box_target
+            cls_target[..., None] == PAD_CLS_TARGET, box_target.new_tensor(0), box_target
         )
         if gt_instance_inds is not None:
             gt_instance_inds = torch.stack(
@@ -347,10 +350,10 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
             num_gt *= 2
 
         dn_box_target = torch.zeros_like(dn_anchor)
-        dn_cls_target = -torch.ones_like(cls_target) * 3
+        dn_cls_target = cls_target.new_full(cls_target.shape, NEG_DN_CLS_TARGET)
         if gt_instance_inds is not None:
             dn_id_target = gt_instance_inds.new_full(
-                gt_instance_inds.shape, UNTRACKED_ID, dtype=torch.long
+                gt_instance_inds.shape, UNTRACKED_ID
             )
         if self.add_neg_dn:
             dn_cls_target = torch.cat([dn_cls_target, dn_cls_target], dim=1)
@@ -392,7 +395,8 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
             )
         else:
             dn_id_target = None
-        valid_mask = dn_cls_target >= 0
+        # valid denotes dn queries corresponding to a gt
+        valid_mask = dn_cls_target != PAD_CLS_TARGET & dn_cls_target != NEG_DN_CLS_TARGET
         if self.add_neg_dn:
             cls_target = (
                 torch.cat([cls_target, cls_target], dim=1)
@@ -400,9 +404,12 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
                 .permute(1, 0, 2)
                 .flatten(1)
             )
+            # valid mask denotes dn queries corresponding to a gt or
+            # negative dn queries
             valid_mask = torch.logical_or(
-                valid_mask, ((cls_target >= 0) & (dn_cls_target == -3))
-            )  # valid denotes the items is not from pad.
+                valid_mask,
+                (cls_target != PAD_CLS_TARGET) & (dn_cls_target == NEG_DN_CLS_TARGET)
+            )
         attn_mask = dn_box_target.new_ones(
             num_gt * self.num_dn_groups, num_gt * self.num_dn_groups
         )
