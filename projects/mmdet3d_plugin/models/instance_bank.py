@@ -5,7 +5,7 @@ import torch.nn.functional as F
 import numpy as np
 
 from mmdet3d.registry import MODELS
-
+from .detection3d.target import UNTRACKED_ID
 __all__ = ["InstanceBank"]
 
 
@@ -187,7 +187,7 @@ class InstanceBank(nn.Module):
             self.instance_inds_inference = torch.where(
                 self.mask[:, None],
                 self.instance_inds_inference,
-                self.instance_inds_inference.new_tensor(-1),
+                self.instance_inds_inference.new_tensor(UNTRACKED_ID),
             )
 
         if num_dn > 0:
@@ -238,7 +238,7 @@ class InstanceBank(nn.Module):
         # convert class prediction to confidence
         confidence = confidence.max(dim=-1).values.sigmoid()
         # initialize empty instance_inds
-        instance_inds = confidence.new_full(confidence.shape, -1).long()
+        instance_inds = confidence.new_full(confidence.shape, UNTRACKED_ID).long()
 
         if (
             self.instance_inds_inference is not None  # not first frame of training
@@ -251,7 +251,7 @@ class InstanceBank(nn.Module):
             )
             instance_inds[:, :self.instance_inds_inference.shape[1]] = self.instance_inds_inference
         # for instances with no ID
-        mask = instance_inds < 0
+        mask = instance_inds == UNTRACKED_ID
         # for instances with confidence above threshold
         if threshold is not None:
             mask = mask & (confidence >= threshold)
@@ -287,5 +287,5 @@ class InstanceBank(nn.Module):
         self.instance_inds_inference = F.pad(
             instance_inds,
             (0, self.num_anchor - self.num_temp_instances),
-            value=-1,
+            value=UNTRACKED_ID,
         )

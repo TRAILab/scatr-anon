@@ -13,6 +13,7 @@ from ..base_target import BaseTargetWithDenoising
 
 __all__ = ["SparseBox3DTarget"]
 
+UNTRACKED_ID = -1
 
 @MODELS.register_module()
 class SparseBox3DTarget(BaseTargetWithDenoising):
@@ -119,7 +120,18 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
         """
         Sample targets for predictions in a single item from the batch.
         Not batched.
-        (TODO) Replace match cost and assignment code with code from latest mmdet, cleaner
+        # TODO: Replace match cost and assignment code with code from the latest mmdet.
+        # The current implementation uses a custom matching cost and assignment logic.
+        # The new implementation should leverage the latest mmdet library's utilities
+        # for computing matching costs and performing the assignment, which are expected
+        # to be more efficient and cleaner. This involves:
+        # 1. Importing the necessary functions from mmdet.
+        # 2. Replacing the custom cost computation with mmdet's cost computation.
+        # 3. Using mmdet's assignment function to replace the current linear_sum_assignment.
+        # The current implementation uses a custom method for computing the match cost and performing the assignment.
+        # The latest mmdet library has a more optimized and cleaner implementation for these operations.
+        # Refer to the mmdet3d/models/detectors/assigners/ directory in the mmdet repository for the latest code.
+        # Specifically, look at the HungarianAssigner3D class and its methods for computing the cost and performing the assignment.
         """
         # construct targets
         num_preds, num_cls = cls_pred_act_i.shape
@@ -127,17 +139,17 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
             (num_preds,), num_cls, dtype=torch.long)
         box_target_i = box_pred_i.new_zeros(box_pred_i.shape)
         reg_weights_i = box_pred_i.new_zeros(box_pred_i.shape)
-        id_target_i = box_pred_i.new_full((num_preds,), -1, dtype=torch.long)
+        id_target_i = box_pred_i.new_full((num_preds,), UNTRACKED_ID, dtype=torch.long)
+        track_id_2_gt_ind = {track_id:gt_ind for gt_ind, track_id in enumerate(id_gt_i)}
 
         # in the case of no gt objects to assign
         if len(cls_gt_i) == 0:
             return cls_target_i, box_target_i, reg_weights_i, id_target_i
 
-        cls_cost_i = self._cls_cost_single(cls_pred_act_i, cls_gt_i)
-
         encoded_box_gt_i = self.encode_reg_target_single(
             box_gt_i, box_pred_i.device)
-        # compute the box cost weights
+
+        # if encoded is nan, set reg_weights to 0
         instance_reg_weights_i = torch.logical_not(
             encoded_box_gt_i.isnan()).to(dtype=encoded_box_gt_i.dtype)
         # set reg_weights by class
@@ -148,6 +160,84 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
                 instance_reg_weights_i.new_tensor(weight),
                 instance_reg_weights_i,
             )
+
+        # split predictions between tq and non-tq
+        # mask on preds
+        tq_mask = cls_gt_i.new_zeros((num_preds,), dtype=torch.bool)
+        if prev_inst_inds_i is not None and self.supervise_qc:
+            # mask on gt
+            nb_obj_mask = torch.tensor([track_id not in prev_inst_inds_i for track_id in id_gt_i], dtype=torch.bool)
+            num_tq = len(prev_inst_inds_i)
+            tq_mask[:num_tq] = prev_inst_inds_i != UNTRACKED_ID
+            pq_mask = torch.logical_not(tq_mask)
+            # construct target for prev tracked objects
+            for pred_idx, prev_inst_ind in enumerate(prev_inst_inds_i):
+                if prev_inst_ind == UNTRACKED_ID:
+                    continue
+                gt_ind = track_id_2_gt_ind.get(prev_inst_ind, None)
+                if gt_ind is None:
+                    continue
+                cls_target_i[pred_idx] = cls_gt_i[gt_ind]
+                box_target_i[pred_idx] = encoded_box_gt_i[gt_ind]
+                reg_weights_i[pred_idx] = instance_reg_weights_i[gt_ind]
+                id_target_i[pred_idx] = id_gt_i[gt_ind]
+            cls_pred_act_pq = cls_pred_act_i[pq_mask]
+            box_pred_pq = box_pred_i[pq_mask]
+            cls_gt_nb = cls_gt_i[nb_obj_mask]
+            encoded_box_gt_nb = encoded_box_gt_i[nb_obj_mask]
+            id_gt_nb = id_gt_i[nb_obj_mask]
+            instance_reg_weights_nb = instance_reg_weights_i[nb_obj_mask]
+        else:
+            pq_mask = torch.logical_not(tq_mask)
+            num_tq = 0
+            cls_pred_act_pq = cls_pred_act_i
+            box_pred_pq = box_pred_i
+            cls_gt_nb = cls_gt_i
+            encoded_box_gt_nb = encoded_box_gt_i
+            id_gt_nb = id_gt_i
+            instance_reg_weights_nb = instance_reg_weights_i
+        breakpoint() # check pq, tq masks
+        # perform hungarian assignment on remaining predictions
+        if len(cls_gt_nb) != 0:
+            cls_target_pq, box_target_pq, reg_weights_pq, id_target_pq = self._sample_single_pq(
+                cls_pred_act_pq,
+                box_pred_pq,
+                cls_gt_nb,
+                encoded_box_gt_nb,
+                id_gt_nb,
+                instance_reg_weights_nb,
+            )
+
+            # merge pq targets back into total target
+            cls_target_i[pq_mask] = cls_target_pq
+            box_target_i[pq_mask] = box_target_pq
+            reg_weights_i[pq_mask] = reg_weights_pq
+            id_target_i[pq_mask] = id_target_pq
+
+        return cls_target_i, box_target_i, reg_weights_i, id_target_i
+
+    def _sample_single_pq(
+            self,
+            cls_pred_act_i,
+            box_pred_i,
+            cls_gt_i,
+            encoded_box_gt_i,
+            id_gt_i,
+            instance_reg_weights_i
+    ):
+        num_preds, num_cls = cls_pred_act_i.shape
+        cls_target_i = cls_pred_act_i.new_full(
+            (num_preds,), num_cls, dtype=torch.long)
+        box_target_i = box_pred_i.new_zeros(box_pred_i.shape)
+        reg_weights_i = box_pred_i.new_zeros(box_pred_i.shape)
+        id_target_i = box_pred_i.new_full((num_preds,), UNTRACKED_ID, dtype=torch.long)
+
+        # in the case of no gt objects to assign
+        if len(cls_gt_i) == 0:
+            return cls_target_i, box_target_i, reg_weights_i, id_target_i
+
+        # compute assignment costs
+        cls_cost_i = self._cls_cost_single(cls_pred_act_i, cls_gt_i)
         box_cost_i = self._box_cost_single(
             box_pred_i, encoded_box_gt_i, instance_reg_weights_i)
 
@@ -257,20 +347,22 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
             dn_anchor = torch.cat([dn_anchor, box_target + noise_neg], dim=1)
             num_gt *= 2
 
-        box_cost = self._box_cost(
-            dn_anchor, box_target, torch.ones_like(box_target)
-        )
         dn_box_target = torch.zeros_like(dn_anchor)
         dn_cls_target = -torch.ones_like(cls_target) * 3
         if gt_instance_inds is not None:
-            dn_id_target = -torch.ones_like(gt_instance_inds)
+            dn_id_target = gt_instance_inds.new_full(
+                gt_instance_inds.shape, UNTRACKED_ID, dtype=torch.long
+            )
         if self.add_neg_dn:
             dn_cls_target = torch.cat([dn_cls_target, dn_cls_target], dim=1)
             if gt_instance_inds is not None:
                 dn_id_target = torch.cat([dn_id_target, dn_id_target], dim=1)
 
         for i in range(dn_anchor.shape[0]):
-            cost = box_cost[i].cpu().numpy()
+            box_cost_i = self._box_cost_single(
+                dn_anchor[i], box_target[i], torch.ones_like(box_target[i])
+            )
+            cost = box_cost_i.cpu().numpy()
             anchor_idx, gt_idx = linear_sum_assignment(cost)
             anchor_idx = dn_anchor.new_tensor(anchor_idx, dtype=torch.int64)
             gt_idx = dn_anchor.new_tensor(gt_idx, dtype=torch.int64)
