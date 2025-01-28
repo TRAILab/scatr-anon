@@ -140,7 +140,7 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
         box_target_i = box_pred_i.new_zeros(box_pred_i.shape)
         reg_weights_i = box_pred_i.new_zeros(box_pred_i.shape)
         id_target_i = box_pred_i.new_full((num_preds,), UNTRACKED_ID, dtype=torch.long)
-        track_id_2_gt_ind = {track_id:gt_ind for gt_ind, track_id in enumerate(id_gt_i)}
+        track_id_2_gt_ind = {track_id.item():gt_ind for gt_ind, track_id in enumerate(id_gt_i)}
 
         # in the case of no gt objects to assign
         if len(cls_gt_i) == 0:
@@ -166,7 +166,7 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
         tq_mask = cls_gt_i.new_zeros((num_preds,), dtype=torch.bool)
         if prev_inst_inds_i is not None and self.supervise_qc:
             # mask on gt
-            nb_obj_mask = torch.tensor([track_id not in prev_inst_inds_i for track_id in id_gt_i], dtype=torch.bool)
+            nb_obj_mask = torch.logical_not(torch.isin(id_gt_i, prev_inst_inds_i))
             num_tq = len(prev_inst_inds_i)
             tq_mask[:num_tq] = prev_inst_inds_i != UNTRACKED_ID
             pq_mask = torch.logical_not(tq_mask)
@@ -174,7 +174,7 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
             for pred_idx, prev_inst_ind in enumerate(prev_inst_inds_i):
                 if prev_inst_ind == UNTRACKED_ID:
                     continue
-                gt_ind = track_id_2_gt_ind.get(prev_inst_ind, None)
+                gt_ind = track_id_2_gt_ind.get(prev_inst_ind.item(), None)
                 if gt_ind is None:
                     continue
                 cls_target_i[pred_idx] = cls_gt_i[gt_ind]
@@ -196,7 +196,6 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
             encoded_box_gt_nb = encoded_box_gt_i
             id_gt_nb = id_gt_i
             instance_reg_weights_nb = instance_reg_weights_i
-        breakpoint() # check pq, tq masks
         # perform hungarian assignment on remaining predictions
         if len(cls_gt_nb) != 0:
             cls_target_pq, box_target_pq, reg_weights_pq, id_target_pq = self._sample_single_pq(

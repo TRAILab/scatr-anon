@@ -786,7 +786,8 @@ class Sparse4DHead(BaseModule):
                 gt_cls,
                 gt_reg,
                 gt_id,
-                prev_instance_inds, # only used when self.sampler.supervise_qc
+                # only use prev_instance_inds if self.supervise_qc and not single_frame_decoder output
+                prev_instance_inds if decoder_idx >= self.num_single_frame_decoder else None,
             )
             reg_target = reg_target[..., : len(self.reg_weights)]
             mask = torch.logical_not(torch.all(reg_target == 0, dim=-1))
