@@ -396,7 +396,7 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
         else:
             dn_id_target = None
         # valid denotes dn queries corresponding to a gt
-        valid_mask = dn_cls_target != PAD_CLS_TARGET & dn_cls_target != NEG_DN_CLS_TARGET
+        valid_mask = (dn_cls_target != PAD_CLS_TARGET) & (dn_cls_target != NEG_DN_CLS_TARGET)
         if self.add_neg_dn:
             cls_target = (
                 torch.cat([cls_target, cls_target], dim=1)
