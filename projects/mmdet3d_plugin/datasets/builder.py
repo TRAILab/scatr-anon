@@ -5,7 +5,7 @@ from functools import partial
 
 import numpy as np
 from mmcv.parallel import collate
-from mmcv.runner import get_dist_info
+from mmengine.dist import get_dist_info
 from mmcv.utils import Registry, build_from_cfg
 from torch.utils.data import DataLoader
 
@@ -133,7 +133,8 @@ def worker_init_fn(worker_id, num_workers, rank, seed):
 
 # Copyright (c) OpenMMLab. All rights reserved.
 import platform
-from mmcv.utils import Registry, build_from_cfg
+from mmengine.registry import Registry
+from mmengine import build_from_cfg
 
 from mmdet.datasets import DATASETS
 from mmdet.datasets.builder import _concat_dataset

@@ -5,9 +5,9 @@ import copy
 import numpy as np
 import torch
 import torch.distributed as dist
-from mmcv.runner import get_dist_info
+from mmengine.dist import get_dist_info
 from torch.utils.data.sampler import Sampler
-
+from mmdet.registry import DATA_SAMPLERS
 
 # https://github.com/open-mmlab/mmdetection/blob/3b72b12fe9b14de906d1363982b9fba05e7d47c1/mmdet/core/utils/dist_utils.py#L157
 def sync_random_seed(seed=None, device="cuda"):
@@ -44,7 +44,7 @@ def sync_random_seed(seed=None, device="cuda"):
     dist.broadcast(random_num, src=0)
     return random_num.item()
 
-
+@DATA_SAMPLERS.register_module()
 class GroupInBatchSampler(Sampler):
     """
     Pardon this horrendous name. Basically, we want every sample to be from its own group.
@@ -80,8 +80,8 @@ class GroupInBatchSampler(Sampler):
 
         assert hasattr(self.dataset, "flag")
         self.flag = self.dataset.flag
-        self.group_sizes = np.bincount(self.flag)
-        self.groups_num = len(self.group_sizes)
+        self.group_sizes = np.bincount(self.flag) # number of samples per group
+        self.groups_num = len(self.group_sizes) # total number of groups, or subclips
         self.global_batch_size = batch_size * world_size
         assert self.groups_num >= self.global_batch_size
 
@@ -98,7 +98,7 @@ class GroupInBatchSampler(Sampler):
                 self.rank * self.batch_size + local_sample_idx
             )
             for local_sample_idx in range(self.batch_size)
-        ]
+        ] # all samplers have the same seed, but only sample from their own gpu/sample-in-batch
 
         # Keep track of a buffer of dataset sample idxs for each local sample idx
         self.buffer_per_local_sample = [[] for _ in range(self.batch_size)]

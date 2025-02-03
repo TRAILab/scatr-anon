@@ -4,25 +4,26 @@ from torch import nn
 import torch.nn.functional as F
 import numpy as np
 
-from mmcv.utils import build_from_cfg
-from mmcv.cnn.bricks.registry import PLUGIN_LAYERS
-
+from mmdet3d.registry import MODELS
+from .detection3d.target import UNTRACKED_ID
 __all__ = ["InstanceBank"]
 
 
 def topk(confidence, k, *inputs):
     bs, N = confidence.shape[:2]
     confidence, indices = torch.topk(confidence, k, dim=1)
-    indices = (
-        indices + torch.arange(bs, device=indices.device)[:, None] * N
-    ).reshape(-1)
+    # create batch index tensor, (bs, k) to match shape of indices
+    batch_indices = torch.arange(
+        bs, device=indices.device).unsqueeze(-1).expand(-1, k)
+
     outputs = []
     for input in inputs:
-        outputs.append(input.flatten(end_dim=1)[indices].reshape(bs, k, -1))
-    return confidence, outputs
+        selected_elements = input[batch_indices, indices]  # (bs, k, ...)
+        outputs.append(selected_elements)
+    return confidence, outputs, indices  # Return indices as well
 
 
-@PLUGIN_LAYERS.register_module()
+@MODELS.register_module()
 class InstanceBank(nn.Module):
     def __init__(
         self,
@@ -45,7 +46,7 @@ class InstanceBank(nn.Module):
         self.max_time_interval = max_time_interval
 
         if anchor_handler is not None:
-            anchor_handler = build_from_cfg(anchor_handler, PLUGIN_LAYERS)
+            anchor_handler = MODELS.build(anchor_handler)
             assert hasattr(anchor_handler, "anchor_projection")
         self.anchor_handler = anchor_handler
         if isinstance(anchor, str):
@@ -73,14 +74,18 @@ class InstanceBank(nn.Module):
     def reset(self):
         self.cached_feature = None
         self.cached_anchor = None
-        self.metas = None
+        # self.metas = None
+        self.history_time = None
+        self.history_T_global = None
         self.mask = None
         self.confidence = None
         self.temp_confidence = None
-        self.instance_id = None
+        self.cached_indices = None
+        self.instance_inds_inference = None
+        self.instance_inds_training = None
         self.prev_id = 0
 
-    def get(self, batch_size, metas=None, dn_metas=None):
+    def get(self, batch_size, timestamp, batched_global2lidar, dn_metas=None):
         instance_feature = torch.tile(
             self.instance_feature[None], (batch_size, 1, 1)
         )
@@ -90,21 +95,22 @@ class InstanceBank(nn.Module):
             self.cached_anchor is not None
             and batch_size == self.cached_anchor.shape[0]
         ):
-            history_time = self.metas["timestamp"]
-            time_interval = metas["timestamp"] - history_time
-            time_interval = time_interval.to(dtype=instance_feature.dtype)
+            # history_time = self.metas["timestamp"]
+            history_time = self.history_time
+            time_interval = timestamp - history_time
+            time_interval = time_interval.to(
+                dtype=instance_feature.dtype, device=instance_feature.device)
+            # mask of which instances in the batch are within the max time interval
             self.mask = torch.abs(time_interval) <= self.max_time_interval
 
             if self.anchor_handler is not None:
-                T_temp2cur = self.cached_anchor.new_tensor(
-                    np.stack(
-                        [
-                            x["T_global_inv"]
-                            @ self.metas["img_metas"][i]["T_global"]
-                            for i, x in enumerate(metas["img_metas"])
-                        ]
-                    )
-                )
+                # update all anchors regardless of new sequence
+                T_temp2cur = torch.stack(
+                    [
+                        x @ self.history_T_global[i]
+                        for i, x in enumerate(batched_global2lidar)
+                    ]
+                ).to(self.cached_anchor.device)
                 self.cached_anchor = self.anchor_handler.anchor_projection(
                     self.cached_anchor,
                     [T_temp2cur],
@@ -125,6 +131,7 @@ class InstanceBank(nn.Module):
                 dn_metas["dn_anchor"] = dn_anchor.reshape(
                     batch_size, num_dn_group, num_dn, -1
                 )
+                # sampler.update_dn handles new sequence case by using instance_bank.mask
             time_interval = torch.where(
                 torch.logical_and(time_interval != 0, self.mask),
                 time_interval,
@@ -139,8 +146,6 @@ class InstanceBank(nn.Module):
         return (
             instance_feature,
             anchor,
-            self.cached_feature,
-            self.cached_anchor,
             time_interval,
         )
 
@@ -157,26 +162,32 @@ class InstanceBank(nn.Module):
             anchor = anchor[:, : self.num_anchor]
             confidence = confidence[:, : self.num_anchor]
 
+        # take the topk instances with highest confidence
         N = self.num_anchor - self.num_temp_instances
         confidence = confidence.max(dim=-1).values
-        _, (selected_feature, selected_anchor) = topk(
+        _, (selected_feature, selected_anchor), _ = topk(
             confidence, N, instance_feature, anchor
         )
+        # concatenate with cached queries (TQ)
         selected_feature = torch.cat(
             [self.cached_feature, selected_feature], dim=1
         )
         selected_anchor = torch.cat(
             [self.cached_anchor, selected_anchor], dim=1
         )
+        # mask determines which items in the batch should be updated with selected_feature.
+        # otherwise, if mask is False, the item should be updated with the original feature.
         instance_feature = torch.where(
             self.mask[:, None, None], selected_feature, instance_feature
         )
         anchor = torch.where(self.mask[:, None, None], selected_anchor, anchor)
-        if self.instance_id is not None:
-            self.instance_id = torch.where(
+        # update instance_inds with new instances
+        if self.instance_inds_inference is not None:
+            # wipe the stored memory based on self.mask (determined by difference in timestamp)
+            self.instance_inds_inference = torch.where(
                 self.mask[:, None],
-                self.instance_id,
-                self.instance_id.new_tensor(-1),
+                self.instance_inds_inference,
+                self.instance_inds_inference.new_tensor(UNTRACKED_ID),
             )
 
         if num_dn > 0:
@@ -191,8 +202,9 @@ class InstanceBank(nn.Module):
         instance_feature,
         anchor,
         confidence,
-        metas=None,
-        feature_maps=None,
+        timestamp,
+        batch_history_T_global,
+        instance_inds=None,
     ):
         if self.num_temp_instances <= 0:
             return
@@ -200,9 +212,12 @@ class InstanceBank(nn.Module):
         anchor = anchor.detach()
         confidence = confidence.detach()
 
-        self.metas = metas
+        # self.metas = metas
+        self.history_time = timestamp
+        self.history_T_global = batch_history_T_global
         confidence = confidence.max(dim=-1).values.sigmoid()
         if self.confidence is not None:
+            # update confidence with decay
             confidence[:, : self.num_temp_instances] = torch.maximum(
                 self.confidence * self.confidence_decay,
                 confidence[:, : self.num_temp_instances],
@@ -212,30 +227,44 @@ class InstanceBank(nn.Module):
         (
             self.confidence,
             (self.cached_feature, self.cached_anchor),
+            self.cached_indices,
         ) = topk(confidence, self.num_temp_instances, instance_feature, anchor)
+        if self.num_temp_instances > 0 and instance_inds is not None:
+            # cache instance_inds for the next frame
+            self.update_instance_inds(
+                instance_inds, confidence, self.cached_indices)
 
-    def get_instance_id(self, confidence, anchor=None, threshold=None):
+    def get_instance_ind(self, confidence, anchor=None, threshold=None):
+        # convert class prediction to confidence
         confidence = confidence.max(dim=-1).values.sigmoid()
-        instance_id = confidence.new_full(confidence.shape, -1).long()
+        # initialize empty instance_inds
+        instance_inds = confidence.new_full(confidence.shape, UNTRACKED_ID).long()
 
         if (
-            self.instance_id is not None
-            and self.instance_id.shape[0] == instance_id.shape[0]
+            self.instance_inds_inference is not None  # not first frame of training
+            and self.instance_inds_inference.shape[0] == instance_inds.shape[0]
         ):
-            instance_id[:, : self.instance_id.shape[1]] = self.instance_id
-
-        mask = instance_id < 0
+            # expect both past inds and new inds to have the same shape
+            assert self.instance_inds_inference.shape[1] == instance_inds.shape[1], (
+                self.instance_inds_inference.shape,
+                instance_inds.shape,
+            )
+            instance_inds[:, :self.instance_inds_inference.shape[1]] = self.instance_inds_inference
+        # for instances with no ID
+        mask = instance_inds == UNTRACKED_ID
+        # for instances with confidence above threshold
         if threshold is not None:
             mask = mask & (confidence >= threshold)
         num_new_instance = mask.sum()
-        new_ids = torch.arange(num_new_instance).to(instance_id) + self.prev_id
-        instance_id[torch.where(mask)] = new_ids
+        # assign them new IDs
+        new_ids = torch.arange(num_new_instance).to(
+            instance_inds) + self.prev_id
+        instance_inds[torch.where(mask)] = new_ids
         self.prev_id += num_new_instance
-        if self.num_temp_instances > 0:
-            self.update_instance_id(instance_id, confidence)
-        return instance_id
+        return instance_inds
 
-    def update_instance_id(self, instance_id=None, confidence=None):
+    def update_instance_inds(self, instance_inds, confidence, topk_indices=None):
+        """Prepare self.instance_inds for the next frame, appending 300 new instances of value -1 to the end (for the PQ)"""
         if self.temp_confidence is None:
             if confidence.dim() == 3:  # bs, num_anchor, num_cls
                 temp_conf = confidence.max(dim=-1).values
@@ -243,12 +272,20 @@ class InstanceBank(nn.Module):
                 temp_conf = confidence
         else:
             temp_conf = self.temp_confidence
-        instance_id = topk(temp_conf, self.num_temp_instances, instance_id)[1][
-            0
-        ]
-        instance_id = instance_id.squeeze(dim=-1)
-        self.instance_id = F.pad(
-            instance_id,
+        # take top-k instances with highest confidence
+        if topk_indices is None:
+            _, instance_inds, _ = topk(
+                temp_conf, self.num_temp_instances, instance_inds)
+            instance_inds = instance_inds[0]
+            instance_inds = instance_inds.squeeze(dim=-1)
+        else:
+            bs, k = topk_indices.shape
+            batch_indices = torch.arange(
+                bs, device=instance_inds.device).unsqueeze(-1).expand(-1, k)
+            instance_inds = instance_inds[batch_indices, topk_indices]
+        # pad with -1 on the end
+        self.instance_inds_inference = F.pad(
+            instance_inds,
             (0, self.num_anchor - self.num_temp_instances),
-            value=-1,
+            value=UNTRACKED_ID,
         )

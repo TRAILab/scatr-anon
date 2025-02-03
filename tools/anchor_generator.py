@@ -1,6 +1,7 @@
+# (TODO) upgrade this script to MMLAB 2.0 libraries
 import numpy as np
 from sklearn.cluster import KMeans
-import mmcv
+import mmengine
 
 from projects.mmdet3d_plugin.core.box3d import *
 
@@ -12,12 +13,12 @@ def get_kmeans_anchor(
     output_file_name="nuscenes_kmeans900.npy",
     verbose=False,
 ):
-    data = mmcv.load(ann_file, file_format="pkl")
+    data = mmengine.load(ann_file, file_format="pkl")
     gt_boxes = np.concatenate([x["gt_boxes"] for x in data["infos"]], axis=0)
     distance = np.linalg.norm(gt_boxes[:, :3], axis=-1, ord=2)
     mask = distance <= detection_range
     gt_boxes = gt_boxes[mask]
-    clf = KMeans(n_clusters=num_anchor, verbose=verbose)
+    clf = KMeans(n_clusters=num_anchor, verbose=verbose, random_state=0)
     print("===========Starting kmeans, please wait.===========")
     clf.fit(gt_boxes[:, [X, Y, Z]])
     anchor = np.zeros((num_anchor, 11))

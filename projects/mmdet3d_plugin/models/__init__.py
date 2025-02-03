@@ -1,19 +1,11 @@
+from .blocks import AsymmetricFFN, DeformableFeatureAggregation, DenseDepthNet
+from .detection3d import (SparseBox3DDecoder, SparseBox3DEncoder,
+                          SparseBox3DKeyPointsGenerator,
+                          SparseBox3DRefinementModule, SparseBox3DTarget)
+from .instance_bank import InstanceBank
 from .sparse4d import Sparse4D
 from .sparse4d_head import Sparse4DHead
-from .blocks import (
-    DeformableFeatureAggregation,
-    DenseDepthNet,
-    AsymmetricFFN,
-)
-from .instance_bank import InstanceBank
-from .detection3d import (
-    SparseBox3DDecoder,
-    SparseBox3DTarget,
-    SparseBox3DRefinementModule,
-    SparseBox3DKeyPointsGenerator,
-    SparseBox3DEncoder,
-)
-
+from .necks import FocalEncoder
 
 __all__ = [
     "Sparse4D",
@@ -27,4 +19,5 @@ __all__ = [
     "SparseBox3DRefinementModule",
     "SparseBox3DKeyPointsGenerator",
     "SparseBox3DEncoder",
+    "FocalEncoder",
 ]

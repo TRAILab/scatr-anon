@@ -14,17 +14,18 @@ class DeformableAggregationFunction(Function):
         sampling_location,
         weights,
     ):
+
         # output: [bs, num_pts, num_embeds]
-        mc_ms_feat = mc_ms_feat.contiguous().float()
+        mc_ms_feat = mc_ms_feat.contiguous().double()  # Use double precision
         spatial_shape = spatial_shape.contiguous().int()
         scale_start_index = scale_start_index.contiguous().int()
-        sampling_location = sampling_location.contiguous().float()
-        weights = weights.contiguous().float()
+        sampling_location = sampling_location.contiguous().double()  # Use double precision
+        weights = weights.contiguous().double()  # Use double precision
         output = deformable_aggregation_ext.deformable_aggregation_forward(
-            mc_ms_feat,
-            spatial_shape,
-            scale_start_index,
-            sampling_location,
+            mc_ms_feat, # same
+            spatial_shape, # same
+            scale_start_index, # same
+            sampling_location, # same
             weights,
         )
         ctx.save_for_backward(
@@ -34,7 +35,7 @@ class DeformableAggregationFunction(Function):
             sampling_location,
             weights,
         )
-        return output
+        return output.float()
 
     @staticmethod
     @once_differentiable
@@ -46,11 +47,11 @@ class DeformableAggregationFunction(Function):
             sampling_location,
             weights,
         ) = ctx.saved_tensors
-        mc_ms_feat = mc_ms_feat.contiguous().float()
+        mc_ms_feat = mc_ms_feat.contiguous().double()  # Use double precision
         spatial_shape = spatial_shape.contiguous().int()
         scale_start_index = scale_start_index.contiguous().int()
-        sampling_location = sampling_location.contiguous().float()
-        weights = weights.contiguous().float()
+        sampling_location = sampling_location.contiguous().double()  # Use double precision
+        weights = weights.contiguous().double()  # Use double precision
 
         grad_mc_ms_feat = torch.zeros_like(mc_ms_feat)
         grad_sampling_location = torch.zeros_like(sampling_location)
@@ -61,7 +62,7 @@ class DeformableAggregationFunction(Function):
             scale_start_index,
             sampling_location,
             weights,
-            grad_output.contiguous(),
+            grad_output.contiguous().double(),  # Use double precision
             grad_mc_ms_feat,
             grad_sampling_location,
             grad_weights,

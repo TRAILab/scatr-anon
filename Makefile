@@ -1,7 +1,7 @@
 WORK_DIR=${PWD}
 PROJECT=sparse4d-lidar
-DOCKER_IMAGE=bcheong/${PROJECT}:torch1
-DOCKER_FILE=Docker/Dockerfile-torch1
+DOCKER_IMAGE=bcheong/${PROJECT}:latest
+DOCKER_FILE=Docker/Dockerfile
 DATA_ROOT_LOCAL_MINI=/media/brian/Data/nuscenes
 DATA_ROOT_LOCAL=/media/brian/Data/nuscenes
 WORK_DIR_LOCAL=/media/brian/Data/job_artifacts/Sparse4D-Lidar/work_dirs
@@ -9,13 +9,14 @@ CKPTS_ROOT_LOCAL=/media/brian/Data/ckpts/sparse4d
 
 DATA_ROOT_APOLLO=/scratch/hpc_nas/datasets/nuscenes/v1.0-trainval
 DATA_ROOT_APOLLO_MINI=/scratch/hpc_nas/datasets/nuscenes/v1.0-mini
-OUTPUT_APOLLO=/home/bcheong/job_artifacts
+OUTPUT_APOLLO=/home/bcheong/job_artifacts/sparse4d-lidar/
 
 DOCKER_OPTS = \
 	-it \
 	--rm \
 	-e DISPLAY=${DISPLAY} \
 	-e WANDB_API_KEY=${WANDB_API_KEY} \
+	-e CUBLAS_WORKSPACE_CONFIG=:4096:8 \
 	-v /tmp:/tmp \
 	-v /tmp/.X11-unix:/tmp/.X11-unix \
 	-v /mnt/fsx:/mnt/fsx \

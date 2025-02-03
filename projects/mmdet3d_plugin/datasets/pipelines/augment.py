@@ -1,9 +1,7 @@
-import torch
-
-import numpy as np
-from numpy import random
 import mmcv
-from mmdet.datasets.builder import PIPELINES
+import numpy as np
+from mmdet3d.registry import TRANSFORMS as PIPELINES
+from numpy import random
 from PIL import Image
 
 
@@ -22,11 +20,7 @@ class ResizeCropFlipImage(object):
             )
             new_imgs.append(np.array(img).astype(np.float32))
             results["lidar2img"][i] = mat @ results["lidar2img"][i]
-            if "cam_intrinsic" in results:
-                results["cam_intrinsic"][i][:3, :3] *= aug_config["resize"]
-                # results["cam_intrinsic"][i][:3, :3] = (
-                #     mat[:3, :3] @ results["cam_intrinsic"][i][:3, :3]
-                # )
+            results["intrinsics"][i][:3, :3] *= aug_config["resize"]
 
         results["img"] = new_imgs
         results["img_shape"] = [x.shape[:2] for x in new_imgs]
@@ -96,7 +90,7 @@ class BBoxRotation(object):
                 [0, 0, 0, 1],
             ]
         )
-        rot_mat_inv = np.linalg.inv(rot_mat)
+        rot_mat_inv = rot_mat.T
 
         num_view = len(results["lidar2img"])
         for view in range(num_view):
@@ -105,10 +99,8 @@ class BBoxRotation(object):
             )
         if "lidar2global" in results:
             results["lidar2global"] = results["lidar2global"] @ rot_mat_inv
-        if "gt_bboxes_3d" in results:
-            results["gt_bboxes_3d"] = self.box_rotate(
-                results["gt_bboxes_3d"], angle
-            )
+        if "gt_bboxes_3d" in results and len(results["gt_bboxes_3d"]) > 0:
+            results["gt_bboxes_3d"].rotate(angle)
         return results
 
     @staticmethod

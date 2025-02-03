@@ -1,18 +1,14 @@
 # Copyright (c) Horizon Robotics. All rights reserved.
 from inspect import signature
+from typing import Dict, List, Optional
 
+import numpy as np
 import torch
+from mmdet3d.models.detectors.mvx_two_stage import MVXTwoStageDetector
+from mmdet3d.registry import MODELS
+from mmdet3d.structures import Det3DDataSample
+from torch import Tensor
 
-from mmcv.runner import force_fp32, auto_fp16
-from mmcv.utils import build_from_cfg
-from mmcv.cnn.bricks.registry import PLUGIN_LAYERS
-from mmdet.models import (
-    DETECTORS,
-    BaseDetector,
-    build_backbone,
-    build_head,
-    build_neck,
-)
 from .grid_mask import GridMask
 
 try:
@@ -21,46 +17,46 @@ try:
 except:
     DAF_VALID = False
 
+from projects.mmdet3d_plugin.utils.misc import hash_tensor, hash_array  # debug tools
+
 __all__ = ["Sparse4D"]
 
 
-@DETECTORS.register_module()
-class Sparse4D(BaseDetector):
+@MODELS.register_module()
+class Sparse4D(MVXTwoStageDetector):
     def __init__(
         self,
-        img_backbone,
-        head,
-        img_neck=None,
-        init_cfg=None,
-        train_cfg=None,
-        test_cfg=None,
-        pretrained=None,
-        use_grid_mask=True,
-        use_deformable_func=False,
-        depth_branch=None,
+        use_grid_mask: bool = True,
+        use_deformable_func: bool = False,
+        depth_branch: Optional[Dict] = None,
+        freeze_pts: bool = True,
+        **kwargs
     ):
-        super(Sparse4D, self).__init__(init_cfg=init_cfg)
-        if pretrained is not None:
-            backbone.pretrained = pretrained
-        self.img_backbone = build_backbone(img_backbone)
-        if img_neck is not None:
-            self.img_neck = build_neck(img_neck)
-        self.head = build_head(head)
+        super(Sparse4D, self).__init__(**kwargs)
         self.use_grid_mask = use_grid_mask
         if use_deformable_func:
             assert DAF_VALID, "deformable_aggregation needs to be set up."
         self.use_deformable_func = use_deformable_func
         if depth_branch is not None:
-            self.depth_branch = build_from_cfg(depth_branch, PLUGIN_LAYERS)
+            self.depth_branch = MODELS.build(depth_branch)
         else:
             self.depth_branch = None
         if use_grid_mask:
             self.grid_mask = GridMask(
-                True, True, rotate=1, offset=False, ratio=0.5, mode=1, prob=0.7
+                True, True, offset=False, ratio=0.5, mode=1, prob=0.7
             )
 
-    @auto_fp16(apply_to=("img",), out_fp32=True)
-    def extract_feat(self, img, return_depth=False, metas=None):
+        if freeze_pts and self.with_pts_backbone:
+            self.pts_backbone.eval()
+            for param in self.pts_backbone.parameters():
+                param.requires_grad = False
+
+    def extract_img_feat(self, img: Optional[Tensor], return_depth: bool = False, batch_input_metas=None):
+        if img is None:
+            return None, None
+        focal = torch.tensor([
+            [intr[0, 0] for intr in bs["intrinsics"]]
+            for bs in batch_input_metas], device=img.device)
         bs = img.shape[0]
         if img.dim() == 5:  # multi-view
             num_cams = img.shape[1]
@@ -70,6 +66,8 @@ class Sparse4D(BaseDetector):
         if self.use_grid_mask:
             img = self.grid_mask(img)
         if "metas" in signature(self.img_backbone.forward).parameters:
+            # residual code from original Sparse4D
+            raise NotImplementedError("metas is not supported.")
             feature_maps = self.img_backbone(img, num_cams, metas=metas)
         else:
             feature_maps = self.img_backbone(img)
@@ -80,49 +78,140 @@ class Sparse4D(BaseDetector):
                 feat, (bs, num_cams) + feat.shape[1:]
             )
         if return_depth and self.depth_branch is not None:
-            depths = self.depth_branch(feature_maps, metas.get("focal"))
+            depths = self.depth_branch(feature_maps, focal)
         else:
             depths = None
         if self.use_deformable_func:
             feature_maps = feature_maps_format(feature_maps)
-        if return_depth:
-            return feature_maps, depths
-        return feature_maps
+        return feature_maps, depths
 
-    @force_fp32(apply_to=("img",))
-    def forward(self, img, **data):
-        if self.training:
-            return self.forward_train(img, **data)
+    def extract_feat(self, batch_inputs_dict: Dict, batch_input_metas: List[Dict]):
+        # img feature extraction
+        batch_img = batch_inputs_dict.get("img", None)
+        feature_maps, depths = self.extract_img_feat(
+            batch_img,
+            return_depth=self.training,
+            batch_input_metas=batch_input_metas,)
+
+        # pts feature extraction
+        if self.with_pts_voxel_encoder:
+            pts_feats = self.extract_pts_feat(
+                batch_inputs_dict.get('voxels', None),
+                batch_input_metas=batch_input_metas,
+            )
         else:
-            return self.forward_test(img, **data)
+            pts_feats = None
+        # hash_tensor(pts_feats[0]) = 47c0c66f09f334cc63bff52660e5dcc05236722a with no spconv
+        # 0ea90631caf8286115d6cfb827a21017b09398f6 with SPCONV
+        if feature_maps is None:
+            feature_maps = [None]
+        if pts_feats is None:
+            pts_feats = [None]
 
-    def forward_train(self, img, **data):
-        feature_maps, depths = self.extract_feat(img, True, data)
-        model_outs = self.head(feature_maps, data)
-        output = self.head.loss(model_outs, data)
-        if depths is not None and "gt_depth" in data:
+        # TODO check output of new_pts_feat against focalformer, need the same torch/cuda version for reproducibility
+        # breakpoint() 
+        if self.with_pts_fusion_layer:
+            new_img_feat, new_pts_feat = self.pts_fusion_layer(
+                feature_maps[0], pts_feats[0], batch_input_metas)
+            # new_img_feat is not actually used in focalformer head
+            return feature_maps, depths, new_pts_feat
+        else:  # just return the normal features
+            return feature_maps, depths, pts_feats
+
+    def loss(self, batch_inputs_dict: Dict,
+             batch_data_samples: List[Det3DDataSample],
+             **kwargs) -> List[Det3DDataSample]:
+        # print([batch_data_samples[0].metainfo[x] for x in ["scene_token", "pcd_rotation_angle", "pcd_trans", "pcd_scale_factor"]])
+        # print([batch_data_samples[1].metainfo[x] for x in ["scene_token", "pcd_rotation_angle", "pcd_trans", "pcd_scale_factor"]])
+        # breakpoint()
+        batch_input_metas = [item.metainfo for item in batch_data_samples]
+
+        # extract features
+        new_img_feat, depths, new_pts_feat = self.extract_feat(
+            batch_inputs_dict, batch_input_metas)
+        # timestamp needs to be type double to avoid quantization errors
+        timestamp = torch.tensor([bs.metainfo["timestamp"]
+                                 for bs in batch_data_samples], dtype=torch.float64)
+        
+        # handle camera-specific data
+        if 'lidar2img' in batch_inputs_dict:
+            lidar2img = batch_inputs_dict['lidar2img'].to(torch.float32)
+        else:
+            lidar2img = None
+        if 'img_shape' in batch_inputs_dict:
+            # flip (H, W) to (W, H)
+            image_wh = batch_inputs_dict['img_shape'][..., [1, 0]]
+        else:
+            image_wh = None
+        
+        model_outs = self.pts_bbox_head(
+            new_pts_feat,
+            new_img_feat,
+            timestamp=timestamp,
+            projection_mat=lidar2img,
+            image_wh=image_wh,
+            batch_data_samples=batch_data_samples,
+        )
+
+        output = self.pts_bbox_head.loss(model_outs, batch_data_samples)
+
+        if depths is not None:
+            gt_depth = [
+                torch.from_numpy(
+                    np.stack([depth.metainfo["gt_depth"][i]
+                            for depth in batch_data_samples])
+                ).to(device=new_img_feat[0].device)
+                for i in range(len(batch_data_samples[0].metainfo["gt_depth"]))
+            ]
             output["loss_dense_depth"] = self.depth_branch.loss(
-                depths, data["gt_depth"]
+                depths, gt_depth
             )
         return output
 
-    def forward_test(self, img, **data):
-        if isinstance(img, list):
-            return self.aug_test(img, **data)
+    def predict(self, batch_inputs_dict: Dict[str, Optional[Tensor]],
+                batch_data_samples: List[Det3DDataSample],
+                **kwargs) -> List[Det3DDataSample]:
+        batch_input_metas = [item.metainfo for item in batch_data_samples]
+
+        # extract features
+        new_img_feat, depths, new_pts_feat = self.extract_feat(
+            batch_inputs_dict, batch_input_metas)
+        # timestamp needs to be type double to avoid quantization errors
+        timestamp = torch.tensor([bs.metainfo["timestamp"]
+                                 for bs in batch_data_samples], dtype=torch.float64)
+        # handle camera-specific data
+        if 'lidar2img' in batch_inputs_dict:
+            lidar2img = batch_inputs_dict['lidar2img'].to(torch.float32)
         else:
-            return self.simple_test(img, **data)
-
-    def simple_test(self, img, **data):
-        feature_maps = self.extract_feat(img)
-
-        model_outs = self.head(feature_maps, data)
-        results = self.head.post_process(model_outs)
-        output = [{"img_bbox": result} for result in results]
+            lidar2img = None
+        if 'img_shape' in batch_inputs_dict:
+            # flip (H, W) to (W, H)
+            image_wh = batch_inputs_dict['img_shape'][..., [1, 0]]
+        else:
+            image_wh = None
+        
+        model_outs = self.pts_bbox_head(
+            new_pts_feat,
+            new_img_feat,
+            timestamp=timestamp,
+            projection_mat=lidar2img,
+            image_wh=image_wh,
+            batch_data_samples=batch_data_samples,
+        )
+        results = self.pts_bbox_head.post_process(model_outs)
+        output = self.add_pred_to_datasample(
+            batch_data_samples, data_instances_3d=results
+        )
         return output
 
-    def aug_test(self, img, **data):
-        # fake test time augmentation
-        for key in data.keys():
-            if isinstance(data[key], list):
-                data[key] = data[key][0]
-        return self.simple_test(img[0], **data)
+    @property
+    def with_pts_fusion_layer(self):
+        """bool: Whether the detector has a fusion layer.
+        Original MVXTwoStageDetector has a typo, calls self.fusion_layer instead of self.pts_fusion_layer"""
+        return hasattr(self, 'pts_fusion_layer') and self.pts_fusion_layer is not None
+
+    @property
+    def with_pts_voxel_encoder(self):
+        """bool: Whether the detector has a voxel encoder."""
+        return hasattr(self,
+                       'pts_voxel_encoder') and self.pts_voxel_encoder is not None

@@ -1,8 +1,7 @@
 import numpy as np
 import mmcv
-from mmcv.parallel import DataContainer as DC
-from mmdet.datasets.builder import PIPELINES
-from mmdet.datasets.pipelines import to_tensor
+from mmengine.structures import base_data_element as DC
+from mmdet3d.registry import TRANSFORMS as PIPELINES
 
 
 @PIPELINES.register_module()
@@ -14,7 +13,7 @@ class MultiScaleDepthMapGenerator(object):
         self.max_depth = max_depth
 
     def __call__(self, input_dict):
-        points = input_dict["points"][..., :3, None]
+        points = input_dict["points"].numpy()[..., :3, None]
         gt_depth = []
         for i, lidar2img in enumerate(input_dict["lidar2img"]):
             H, W = input_dict["img_shape"][i][:2]
@@ -24,8 +23,8 @@ class MultiScaleDepthMapGenerator(object):
                 + lidar2img[:3, 3]
             )
             pts_2d[:, :2] /= pts_2d[:, 2:3]
-            U = np.round(pts_2d[:, 0]).astype(np.int32)
-            V = np.round(pts_2d[:, 1]).astype(np.int32)
+            U = np.round(pts_2d[:, 0]) # .astype(np.int32)
+            V = np.round(pts_2d[:, 1]) # .astype(np.int32)
             depths = pts_2d[:, 2]
             mask = np.logical_and.reduce(
                 [
@@ -85,16 +84,16 @@ class NuScenesSparse4DAdaptor(object):
                 input_dict["gt_bboxes_3d"][:, 6], offset=0.5, period=2 * np.pi
             )
             input_dict["gt_bboxes_3d"] = DC(
-                to_tensor(input_dict["gt_bboxes_3d"]).float()
-            )
+                (input_dict["gt_bboxes_3d"])
+            ).to_tensor().float()
         if "gt_labels_3d" in input_dict:
             input_dict["gt_labels_3d"] = DC(
-                to_tensor(input_dict["gt_labels_3d"]).long()
-            )
+                (input_dict["gt_labels_3d"])
+            ).to_tensor().long()
 
         imgs = [img.transpose(2, 0, 1) for img in input_dict["img"]]
         imgs = np.ascontiguousarray(np.stack(imgs, axis=0))
-        input_dict["img"] = DC(to_tensor(imgs), stack=True)
+        input_dict["img"] = DC(imgs).to_tensor()
         return input_dict
 
     def limit_period(
@@ -155,9 +154,11 @@ class CircleObjectRangeFilter(object):
 
     def __call__(self, input_dict):
         gt_bboxes_3d = input_dict["gt_bboxes_3d"]
+        if len(gt_bboxes_3d) == 0:
+            return input_dict
         gt_labels_3d = input_dict["gt_labels_3d"]
         dist = np.sqrt(
-            np.sum(gt_bboxes_3d[:, :2] ** 2, axis=-1)
+            np.sum(gt_bboxes_3d.numpy()[:, :2] ** 2, axis=-1)
         )
         mask = np.array([False] * len(dist))
         for label_idx, dist_thred in enumerate(self.class_dist_thred):

@@ -1,22 +1,14 @@
 # Copyright (c) Horizon Robotics. All rights reserved.
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
-import numpy as np
 import torch
 import torch.nn as nn
-from torch.cuda.amp.autocast_mode import autocast
+from torch.amp.autocast_mode import autocast
 
 from mmcv.cnn import Linear, build_activation_layer, build_norm_layer
-from mmcv.runner.base_module import Sequential, BaseModule
-from mmcv.cnn.bricks.transformer import FFN
-from mmcv.utils import build_from_cfg
+from mmengine.model import Sequential, BaseModule, xavier_init, constant_init
 from mmcv.cnn.bricks.drop import build_dropout
-from mmcv.cnn import xavier_init, constant_init
-from mmcv.cnn.bricks.registry import (
-    ATTENTION,
-    PLUGIN_LAYERS,
-    FEEDFORWARD_NETWORK,
-)
+from mmdet3d.registry import MODELS
 
 try:
     from ..ops import deformable_aggregation_function as DAF
@@ -43,7 +35,7 @@ def linear_relu_ln(embed_dims, in_loops, out_loops, input_dims=None):
     return layers
 
 
-@ATTENTION.register_module()
+@MODELS.register_module()
 class DeformableFeatureAggregation(BaseModule):
     def __init__(
         self,
@@ -79,14 +71,12 @@ class DeformableFeatureAggregation(BaseModule):
         self.residual_mode = residual_mode
         self.proj_drop = nn.Dropout(proj_drop)
         kps_generator["embed_dims"] = embed_dims
-        self.kps_generator = build_from_cfg(kps_generator, PLUGIN_LAYERS)
+        self.kps_generator = MODELS.build(kps_generator)
         self.num_pts = self.kps_generator.num_pts
         if temporal_fusion_module is not None:
             if "embed_dims" not in temporal_fusion_module:
                 temporal_fusion_module["embed_dims"] = embed_dims
-            self.temp_module = build_from_cfg(
-                temporal_fusion_module, PLUGIN_LAYERS
-            )
+            self.temp_module = MODELS.build(temporal_fusion_module)
         else:
             self.temp_module = None
         self.output_proj = Linear(embed_dims, embed_dims)
@@ -114,19 +104,21 @@ class DeformableFeatureAggregation(BaseModule):
         anchor: torch.Tensor,
         anchor_embed: torch.Tensor,
         feature_maps: List[torch.Tensor],
-        metas: dict,
+        projection_mat: torch.Tensor,
+        image_wh: torch.Tensor,
         **kwargs: dict,
     ):
         bs, num_anchor = instance_feature.shape[:2]
         key_points = self.kps_generator(anchor, instance_feature)
-        weights = self._get_weights(instance_feature, anchor_embed, metas)
+        weights = self._get_weights(
+            instance_feature, anchor_embed, projection_mat)
 
         if self.use_deformable_func:
             points_2d = (
                 self.project_points(
                     key_points,
-                    metas["projection_mat"],
-                    metas.get("image_wh"),
+                    projection_mat,
+                    image_wh,
                 )
                 .permute(0, 2, 3, 1, 4)
                 .reshape(bs, num_anchor, self.num_pts, self.num_cams, 2)
@@ -150,8 +142,8 @@ class DeformableFeatureAggregation(BaseModule):
             features = self.feature_sampling(
                 feature_maps,
                 key_points,
-                metas["projection_mat"],
-                metas.get("image_wh"),
+                projection_mat,
+                image_wh,
             )
             features = self.multi_view_level_fusion(features, weights)
             features = features.sum(dim=2)  # fuse multi-point features
@@ -162,12 +154,12 @@ class DeformableFeatureAggregation(BaseModule):
             output = torch.cat([output, instance_feature], dim=-1)
         return output
 
-    def _get_weights(self, instance_feature, anchor_embed, metas=None):
+    def _get_weights(self, instance_feature, anchor_embed, projection_mat):
         bs, num_anchor = instance_feature.shape[:2]
         feature = instance_feature + anchor_embed
         if self.camera_encoder is not None:
             camera_embed = self.camera_encoder(
-                metas["projection_mat"][:, :, :3].reshape(
+                projection_mat[:, :, :3].reshape(
                     bs, self.num_cams, -1
                 )
             )
@@ -262,7 +254,7 @@ class DeformableFeatureAggregation(BaseModule):
         return features
 
 
-@PLUGIN_LAYERS.register_module()
+@MODELS.register_module()
 class DenseDepthNet(BaseModule):
     def __init__(
         self,
@@ -312,7 +304,7 @@ class DenseDepthNet(BaseModule):
             gt = gt[fg_mask]
             pred = pred[fg_mask]
             pred = torch.clip(pred, 0.0, self.max_depth)
-            with autocast(enabled=False):
+            with autocast('cuda', enabled=False):
                 error = torch.abs(pred - gt).sum()
                 _loss = (
                     error
@@ -323,7 +315,7 @@ class DenseDepthNet(BaseModule):
         return loss
 
 
-@FEEDFORWARD_NETWORK.register_module()
+@MODELS.register_module()
 class AsymmetricFFN(BaseModule):
     def __init__(
         self,

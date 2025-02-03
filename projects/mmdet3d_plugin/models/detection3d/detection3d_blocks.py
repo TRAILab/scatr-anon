@@ -1,14 +1,11 @@
 import torch
 import torch.nn as nn
-import numpy as np
+from mmengine.model import BaseModule, xavier_init
+from mmdet3d.registry import MODELS
 
-from mmcv.cnn import Linear, Scale, bias_init_with_prob
-from mmcv.runner.base_module import Sequential, BaseModule
-from mmcv.cnn import xavier_init
-from mmcv.cnn.bricks.registry import (
-    PLUGIN_LAYERS,
-    POSITIONAL_ENCODING,
-)
+from mmcv.cnn import Linear, Scale
+from mmengine.model import bias_init_with_prob
+
 
 from projects.mmdet3d_plugin.core.box3d import *
 from ..blocks import linear_relu_ln
@@ -20,7 +17,7 @@ __all__ = [
 ]
 
 
-@POSITIONAL_ENCODING.register_module()
+@MODELS.register_module()
 class SparseBox3DEncoder(BaseModule):
     def __init__(
         self,
@@ -74,7 +71,7 @@ class SparseBox3DEncoder(BaseModule):
         return output
 
 
-@PLUGIN_LAYERS.register_module()
+@MODELS.register_module()
 class SparseBox3DRefinementModule(BaseModule):
     def __init__(
         self,
@@ -156,7 +153,7 @@ class SparseBox3DRefinementModule(BaseModule):
         return output, cls, quality
 
 
-@PLUGIN_LAYERS.register_module()
+@MODELS.register_module()
 class SparseBox3DKeyPointsGenerator(BaseModule):
     def __init__(
         self,
@@ -189,7 +186,10 @@ class SparseBox3DKeyPointsGenerator(BaseModule):
         temp_timestamps=None,
     ):
         bs, num_anchor = anchor.shape[:2]
-        size = anchor[..., None, [W, L, H]].exp()
+        # to support AMP training, clamp anchor to avoid overflow
+        # TODO look into alternative, like
+        # with torch.cuda.amp.autocast(enabled=False):
+        size = anchor[..., None, [W, L, H]].clamp(max=5).exp() # exp(5) = 148, assume no object is larger than 148m
         key_points = self.fix_scale * size
         if self.num_learnable_pts > 0 and instance_feature is not None:
             learnable_scale = (

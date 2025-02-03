@@ -6,3 +6,11 @@ build/
 *.egg-info/
 *.so
 ckpt
+data/
+work_dirs/
+.vscode/
+*.ninja
+*.ninja_log
+*.ninja_deps
+*.o
+*.d

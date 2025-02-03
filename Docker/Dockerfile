@@ -10,12 +10,14 @@ ENV TORCH_USE_CUDA_DSA=1
 ENV TORCH_NVCC_FLAGS="-Xfatbin -compress-all"
 ENV CMAKE_PREFIX_PATH="$(dirname $(which conda))/../"
 ENV DEBIAN_FRONTEND=noninteractive
+# set CUBLAS_WORKSPACE_CONFIG=:4096:8 for reproducibility
+ENV CUBLAS_WORKSPACE_CONFIG=:4096:8
 
 # Avoid Public GPG key error
 # https://github.com/NVIDIA/nvidia-docker/issues/1631
-RUN rm /etc/apt/sources.list.d/cuda.list \
-    && rm /etc/apt/sources.list.d/nvidia-ml.list \
-    && apt-key del 7fa2af80 \
+# RUN rm /etc/apt/sources.list.d/cuda.list \
+    # && rm /etc/apt/sources.list.d/nvidia-ml.list \
+RUN apt-key del 7fa2af80 \
     && apt-key adv --fetch-keys https://developer.download.nvidia.com/compute/cuda/repos/ubuntu1804/x86_64/3bf863cc.pub \
     && apt-key adv --fetch-keys https://developer.download.nvidia.com/compute/machine-learning/repos/ubuntu1804/x86_64/7fa2af80.pub
 
@@ -67,7 +69,7 @@ RUN git clone https://github.com/TRAILab/nuscenes-devkit.git && cd nuscenes-devk
 RUN mim install "mmengine==0.10.5" "mmcv==2.1.0" "mmdet==3.2.0" "mmdet3d==1.4.0"
 
 # install spconv
-RUN pip install cumm-cu120 spconv-cu120
+RUN pip install spconv-cu124
 
 WORKDIR /workspace/sparse4d-lidar
 ENV PYTHONPATH="/workspace/sparse4d-lidar:${PYTHONPATH}"
