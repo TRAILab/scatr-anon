@@ -17,7 +17,7 @@ num_epochs = 12
 checkpoint_epoch_interval = 1
 val_epoch_interval = 1
 
-short_name = "lidar-full"
+short_name = "lidar-supervise_qc"
 work_dir = f"work_dirs/sparse4dv3-temporal_lidar_1x{num_gpus}_bs{batch_size}_{input_shape[1]}x{input_shape[0]}-{num_epochs}e_{short_name}"
 
 load_from = 'ckpts/focalformer3d_converted/DeformFormer3D_L_iterimg_ep20_mAP655_NDS707.pth'
@@ -57,6 +57,7 @@ model = dict(
             num_cls={{_base_.num_classes}}, # from dataset
         ),
         sampler=dict(
+            supervise_qc=True,
             cls_wise_reg_weights={
                 class_names.index("traffic_cone"): [
                     2.0,
