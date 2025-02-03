@@ -141,7 +141,7 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
             (num_preds,), num_cls, dtype=torch.long)
         box_target_i = box_pred_i.new_zeros(box_pred_i.shape)
         reg_weights_i = box_pred_i.new_zeros(box_pred_i.shape)
-        id_target_i = box_pred_i.new_full((num_preds,), UNTRACKED_ID, dtype=torch.long)
+        id_target_i = id_gt_i.new_full((num_preds,), UNTRACKED_ID)
         track_id_2_gt_ind = {track_id.item():gt_ind for gt_ind, track_id in enumerate(id_gt_i)}
 
         # in the case of no gt objects to assign
@@ -227,11 +227,10 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
             instance_reg_weights_i
     ):
         num_preds, num_cls = cls_pred_act_i.shape
-        cls_target_i = cls_pred_act_i.new_full(
-            (num_preds,), num_cls, dtype=torch.long)
-        box_target_i = box_pred_i.new_zeros(box_pred_i.shape)
-        reg_weights_i = box_pred_i.new_zeros(box_pred_i.shape)
-        id_target_i = box_pred_i.new_full((num_preds,), UNTRACKED_ID, dtype=torch.long)
+        cls_target_i = cls_gt_i.new_full((num_preds,), num_cls)
+        box_target_i = encoded_box_gt_i.new_zeros(box_pred_i.shape)
+        reg_weights_i = instance_reg_weights_i.new_zeros(box_pred_i.shape)
+        id_target_i = id_gt_i.new_full((num_preds,), UNTRACKED_ID)
 
         # in the case of no gt objects to assign
         if len(cls_gt_i) == 0:
