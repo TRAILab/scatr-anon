@@ -45,13 +45,13 @@ class SparseBox3DDecoder(object):
     ):
         squeeze_cls = instance_inds is not None
 
-        cls_scores = cls_scores[output_idx].sigmoid()
+        cls_scores = cls_scores[output_idx].sigmoid().squeeze(1)
 
         if squeeze_cls:
             cls_scores, cls_ids = cls_scores.max(dim=-1)
             cls_scores = cls_scores.unsqueeze(dim=-1)
 
-        box_preds = box_preds[output_idx]
+        box_preds = box_preds[output_idx].squeeze(1) # squeeze along the num_group dimension
         bs, num_pred, num_cls = cls_scores.shape
         cls_scores, indices = cls_scores.flatten(start_dim=1).topk(
             self.num_output, dim=1, sorted=self.sorted
@@ -62,7 +62,7 @@ class SparseBox3DDecoder(object):
             mask = cls_scores >= self.score_threshold
 
         if quality is not None:
-            centerness = quality[output_idx][..., CNS]
+            centerness = quality[output_idx][..., CNS].squeeze(1)
             centerness = torch.gather(centerness, 1, indices // num_cls)
             cls_scores_origin = cls_scores.clone()
             cls_scores *= centerness.sigmoid()
@@ -101,7 +101,7 @@ class SparseBox3DDecoder(object):
             if quality is not None:
                 output_dict["cls_scores"] = scores_origin.cpu()
             if instance_inds is not None:
-                ids = instance_inds[i, indices[i]]
+                ids = instance_inds[i, 0, indices[i]]
                 if self.score_threshold is not None:
                     ids = ids[mask[i]]
                 output_dict["track_ids"] = ids

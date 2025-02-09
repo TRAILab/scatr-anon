@@ -1,6 +1,8 @@
 use_deformable_func = True
 embed_dims = 256
-num_groups = 8
+num_heads = 8
+num_dn_groups = 5
+num_temp_dn_groups = 3
 num_decoder = 6
 num_single_frame_decoder = 1
 decouple_attn = True
@@ -73,21 +75,25 @@ model = dict(
         type="Sparse4DHead",
         cls_threshold_to_reg=0.05,
         decouple_attn=decouple_attn,
+        match_learned_dn_groups=True,
         # focalformer3d_params
         multistage_heatmap=multistage_heatmap,
         extra_feat=extra_feat,
         modality="lidar",
         xy_size=(180, 180),
         init_pq_with_heatmap=False,  # TODO add support for HM init
+        # other sparse4D params
         instance_bank=dict(
             type="InstanceBank",
             num_anchor=900,
+            num_learned_groups=num_dn_groups,
+            num_learned_temp_groups=num_temp_dn_groups,
             embed_dims=embed_dims,
             anchor="_nuscenes_kmeans900.npy",
             anchor_handler=dict(type="SparseBox3DKeyPointsGenerator"),
             num_temp_instances=600 if temporal else -1,
             confidence_decay=0.6,
-            feat_grad=False,
+            feat_grad=True, # true for multiple learned groups
         ),
         anchor_encoder=dict(
             type="SparseBox3DEncoder",
@@ -123,7 +129,7 @@ model = dict(
         temp_graph_model=dict(
             type="MultiheadAttention",
             embed_dims=embed_dims if not decouple_attn else embed_dims * 2,
-            num_heads=num_groups,
+            num_heads=num_heads,
             batch_first=True,
             dropout=drop_out,
         )
@@ -132,7 +138,7 @@ model = dict(
         graph_model=dict(
             type="MultiheadAttention",
             embed_dims=embed_dims if not decouple_attn else embed_dims * 2,
-            num_heads=num_groups,
+            num_heads=num_heads,
             batch_first=True,
             dropout=drop_out,
         ),
@@ -163,8 +169,8 @@ model = dict(
         ),
         sampler=dict(
             type="SparseBox3DTarget",
-            num_dn_groups=5,
-            num_temp_dn_groups=3,
+            num_dn_groups=num_dn_groups,
+            num_temp_dn_groups=num_temp_dn_groups,
             dn_noise_scale=[2.0] * 3 + [0.5] * 7,
             max_dn_gt=32,
             add_neg_dn=True,

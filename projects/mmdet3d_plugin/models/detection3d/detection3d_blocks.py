@@ -122,8 +122,8 @@ class SparseBox3DRefinementModule(BaseModule):
         instance_feature: torch.Tensor,
         anchor: torch.Tensor,
         anchor_embed: torch.Tensor,
-        time_interval: torch.Tensor = 1.0,
-        return_cls=True,
+        time_interval: torch.Tensor,
+        return_cls:bool = True,
     ):
         feature = instance_feature + anchor_embed
         output = self.layers(feature)
@@ -137,8 +137,8 @@ class SparseBox3DRefinementModule(BaseModule):
         if self.output_dim > 8:
             if not isinstance(time_interval, torch.Tensor):
                 time_interval = instance_feature.new_tensor(time_interval)
-            translation = torch.transpose(output[..., VX:], 0, -1)
-            velocity = torch.transpose(translation / time_interval, 0, -1)
+            translation = torch.transpose(output[..., VX:], 0, -1) # move batch dim to last dim
+            velocity = torch.transpose(translation / time_interval, 0, -1) # move batch dim back to the start
             output[..., VX:] = velocity + anchor[..., VX:]
 
         if return_cls:

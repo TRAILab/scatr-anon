@@ -13,6 +13,8 @@ from mmengine.model import BaseModule
 from projects.mmdet3d_plugin.models.utils.utils import (
     MLP, gen_sineembed_for_position)
 
+from .detection3d.target import NEG_DN_CLS_TARGET, PAD_CLS_TARGET, UNTRACKED_ID
+
 __all__ = ["Sparse4DHead"]
 
 
@@ -44,12 +46,13 @@ class Sparse4DHead(BaseModule):
         loss_reg: Optional[Dict] = None,
         decoder: Optional[Dict] = None,
         sampler: Optional[Dict] = None,
-        reg_weights: Optional[List] = None,
+        reg_weights: Optional[List[float]] = None,
         operation_order: Optional[List[str]] = None,
         cls_threshold_to_reg: float = -1,
         dn_loss_weight: float = 5.0,
         decouple_attn: bool = True,
         init_cfg: Optional[Dict] = None,
+        match_learned_dn_groups: bool = True,
         **kwargs,
     ):
         super(Sparse4DHead, self).__init__(init_cfg)
@@ -63,6 +66,8 @@ class Sparse4DHead(BaseModule):
             self.reg_weights = [1.0] * 10
         else:
             self.reg_weights = reg_weights
+        if not isinstance(self.reg_weights, torch.Tensor):
+            self.reg_weights = torch.tensor(self.reg_weights)
 
         if operation_order is None:
             operation_order = [
@@ -76,8 +81,9 @@ class Sparse4DHead(BaseModule):
                 "refine",
             ] * num_decoder
             # delete the 'gnn' and 'norm' layers in the first transformer blocks
-            operation_order = operation_order[3:]
-        self.operation_order = operation_order
+            self.operation_order = operation_order[3:]
+        else:
+            self.operation_order = operation_order
 
         # =========== build modules ===========
 
@@ -114,6 +120,15 @@ class Sparse4DHead(BaseModule):
             self.fc_before = nn.Identity()
             self.fc_after = nn.Identity()
         self.num_classes = refine_layer['num_cls']
+
+        # assume num_dn_groups == num_learned_groups
+        # assume the same for temporal groups
+        if not match_learned_dn_groups:
+            raise NotImplementedError(
+                "num_dn_groups must match num_learned_groups")
+        else:
+            # match the number of learned groups to the number of dn groups
+            assert self.instance_bank.num_learned_groups == self.sampler.num_dn_groups
         # focalformer
         self.use_lidar = modality == "lidar"
         self.use_camera = modality == "camera"
@@ -470,9 +485,11 @@ class Sparse4DHead(BaseModule):
             ################## Deformable Parameters #############
             # always do multiscale
             spatial_shapes = torch.as_tensor(
-                [i.shape[2:] for i in multiscale_inputs], dtype=torch.long, device='cuda')
+                [i.shape[2:] for i in multiscale_inputs], 
+                device=multiscale_inputs_flatten.device)
             level_start_index = torch.as_tensor(
-                [0, *(torch.cumsum(torch.prod(spatial_shapes, dim=1), dim=0)[:-1])], dtype=torch.long, device='cuda')
+                [0, *(torch.cumsum(torch.prod(spatial_shapes, dim=1), dim=0)[:-1])], 
+                device=multiscale_inputs_flatten.device)
 
             # lidar feat
             lidar_feat_flatten = multiscale_inputs_flatten
@@ -519,6 +536,7 @@ class Sparse4DHead(BaseModule):
             batched_global2lidar=batched_global2lidar,
             dn_metas=self.sampler.dn_metas
         )
+        num_learned_grp = anchor.shape[1]
 
         # ========= prepare for denosing training ============
         # 1. get dn metas: noisy-anchors and corresponding GT
@@ -534,41 +552,60 @@ class Sparse4DHead(BaseModule):
                 [ds.gt_instances_3d.instance_inds for ds in batch_data_samples],
             )
         if dn_metas is not None:
+            # TODO put this condition into a separate method
             (
-                dn_anchor,
+                dn_anchor,  # (bs, num_dn_groups, num_dn_anchor, embbed_dim)
                 dn_reg_target,
                 dn_cls_target,
                 dn_attn_mask,
                 valid_mask,
                 dn_id_target,
             ) = dn_metas
-            num_dn_anchor = dn_anchor.shape[1]
+            num_dn_groups = dn_anchor.shape[1]
+            num_dn_anchor = dn_anchor.shape[2]  # num dn in a single group
+            # check anchor dimension. If they don't match, pad dn_anchor with zeros
             if dn_anchor.shape[-1] != anchor.shape[-1]:
                 remain_state_dims = anchor.shape[-1] - dn_anchor.shape[-1]
                 dn_anchor = torch.cat(
                     [
                         dn_anchor,
                         dn_anchor.new_zeros(
-                            batch_size, num_dn_anchor, remain_state_dims
+                            batch_size, num_dn_groups, num_dn_anchor, remain_state_dims
                         ),
                     ],
                     dim=-1,
                 )
-            anchor = torch.cat([anchor, dn_anchor], dim=1)
+            assert num_dn_groups % num_learned_grp == 0  # only support equal division
+            dn_grp_per_learned_grp = num_dn_groups // num_learned_grp
+            # concat along the query dim
+            if num_learned_grp == num_dn_groups:
+                # assign one dn group to each learned grp
+                # (bs, num_learned_grp, num_instance, embbed_dim)
+                anchor = torch.cat([anchor, dn_anchor], dim=2)
+            else:
+                # divide dn groups evenly among learned groups
+                raise NotImplementedError(
+                    "multiple dn groups per learned group is not supported yet")
+            # zero initialize the instance_features of dn instances
             instance_feature = torch.cat(
                 [
                     instance_feature,
                     instance_feature.new_zeros(
-                        batch_size, num_dn_anchor, instance_feature.shape[-1]
+                        batch_size,
+                        num_learned_grp,
+                        num_dn_anchor * dn_grp_per_learned_grp,
+                        instance_feature.shape[-1]
                     ),
                 ],
-                dim=1,
+                dim=2,
             )
-            num_instance = instance_feature.shape[1]
+            # construct attn mask
+            num_instance = instance_feature.shape[2]
             num_free_instance = num_instance - num_dn_anchor
             attn_mask = anchor.new_ones(
                 (num_instance, num_instance), dtype=torch.bool
             )
+            # mask false means attend, so here we attend to the free_instances
             attn_mask[:num_free_instance, :num_free_instance] = False
             attn_mask[num_free_instance:, num_free_instance:] = dn_attn_mask
 
@@ -582,57 +619,84 @@ class Sparse4DHead(BaseModule):
             if self.layers[i] is None:
                 continue
             elif op == "temp_gnn":
+                # flatten things along the batch and group dims
+                instance_feature_flattened = instance_feature.flatten(0, 1)
+                anchor_embed_flattened = anchor_embed.flatten(0, 1)
                 # attend to learnable instances (300) + temp instances (600) or in first frame case only learnable instances (900)
                 # in temp_gnn, do not attend to dn instances
-                instance_feature = self.graph_model(
-                    i,
-                    instance_feature,
-                    instance_feature[:, :self.instance_bank.num_anchor],
-                    instance_feature[:, :self.instance_bank.num_anchor],
-                    query_pos=anchor_embed,
-                    key_pos=anchor_embed[:, :self.instance_bank.num_anchor],
+                instance_feature_flattened = self.graph_model(
+                    index=i,
+                    query=instance_feature_flattened,
+                    key=instance_feature_flattened[:, :self.instance_bank.num_anchor],
+                    value=instance_feature_flattened[:, :self.instance_bank.num_anchor],
+                    query_pos=anchor_embed_flattened,
+                    key_pos=anchor_embed_flattened[:, :self.instance_bank.num_anchor],
                 )
+                # reshape back to batch x num_learned_grp x num_instance x embed_dim
+                instance_feature = instance_feature_flattened.view(
+                    batch_size, num_learned_grp, -1, instance_feature.shape[-1])
             elif op == "gnn":
+                instance_feature_flattened = instance_feature.flatten(0, 1)
+                anchor_embed_flattened = anchor_embed.flatten(0, 1)
                 instance_feature = self.graph_model(
-                    i,
-                    instance_feature,
-                    value=instance_feature,
-                    query_pos=anchor_embed,
+                    index=i,
+                    query=instance_feature_flattened,
+                    value=instance_feature_flattened,
+                    query_pos=anchor_embed_flattened,
                     attn_mask=attn_mask,
                 )
+                # reshape back to batch x num_learned_grp x num_instance x embed_dim
+                instance_feature = instance_feature.view(
+                    batch_size, num_learned_grp, -1, instance_feature.shape[-1])
             elif op == "norm" or op == "ffn":
                 instance_feature = self.layers[i](instance_feature)
             elif op == "deformable":
-                instance_feature = self.layers[i](
-                    instance_feature,
-                    anchor,
-                    anchor_embed,
+                # flatten over the num groups and num queries
+                instance_feature_flattened = self.layers[i](
+                    instance_feature.flatten(1, 2),
+                    anchor.flatten(1, 2),
+                    anchor_embed.flatten(1, 2),
                     feature_maps,
                     projection_mat,
                     image_wh,
                 )
+                # reshape back to batch x num_learned_grp x num_instance x embed_dim
+                instance_feature = instance_feature_flattened.view(
+                    batch_size, num_learned_grp, -1, instance_feature.shape[-1])
             elif op == "deformable_lidar":
+                # flatten along the num groups and num queries
+                instance_feature_flattened = instance_feature.flatten(1, 2)
+                anchor_flattened = anchor.flatten(1, 2)
+                anchor_embed_flattened = anchor_embed.flatten(1, 2)
                 # normalize anchor to [0, 1] to get reference_points
-                reference_points = anchor[..., :2]
+                reference_points = anchor_flattened[..., :2]
                 reference_points = (reference_points - self.point_cloud_range[:2].to(
                     reference_points.device)) / self.ref_point_norm[:2].to(reference_points.device)
                 reference_points = reference_points.clamp(0, 1)
+
                 # expand reference_points to match the shape of valid ratios, see mmdet DeformableDetrTransformerDecoder
                 reference_points_input = \
                     reference_points[:, :, None] * \
                     MSDA_kwargs["valid_ratios"][:, None]
-                output = self.layers[i](
-                    query=instance_feature,  # B x N x C
+
+                output_flattened = self.layers[i](
+                    query=instance_feature_flattened,  # B x N x C
                     value=pos_lidar_feat_flatten.permute(
                         0, 2, 1),  # B C Pv -> B Pv C
                     key=pos_lidar_feat_flatten.permute(  # only used by dense attn
                         0, 2, 1),  # B C Pv -> B Pv C
-                    query_pos=anchor_embed,  # B N C
+                    query_pos=anchor_embed_flattened,  # B N C
                     reference_points=reference_points_input,  # B N num_levels 2
                     **MSDA_kwargs,)
+
+                # reshape back to batch x num_learned_grp x num_instance x embed_dim
+                output = output_flattened.view(
+                    batch_size, num_learned_grp, -1, instance_feature.shape[-1])
+
                 # follow DeformableFeatureAggregation, concat the output
                 instance_feature = torch.cat(
                     [instance_feature, output], dim=-1)
+
             elif op == "refine":
                 anchor, cls, qt = self.layers[i](
                     instance_feature,
@@ -649,9 +713,11 @@ class Sparse4DHead(BaseModule):
                 classification.append(cls)
                 quality.append(qt)
                 if len(prediction) == self.num_single_frame_decoder:
+                    # update learned queries with cached TQ
                     instance_feature, anchor = self.instance_bank.update(
                         instance_feature, anchor, cls
                     )
+                    # update DN queries with cached temp DN group
                     if (
                         dn_metas is not None
                         and self.sampler.num_temp_dn_groups > 0
@@ -684,14 +750,15 @@ class Sparse4DHead(BaseModule):
 
         # split predictions of learnable instances and noisy instances
         if dn_metas is not None:
+            # classification, prediction, quality are length of total decoder layers
             dn_classification = [
-                x[:, num_free_instance:] for x in classification
+                x[:, :, num_free_instance:] for x in classification
             ]
-            classification = [x[:, :num_free_instance] for x in classification]
-            dn_prediction = [x[:, num_free_instance:] for x in prediction]
-            prediction = [x[:, :num_free_instance] for x in prediction]
+            classification = [x[:, :, :num_free_instance] for x in classification]
+            dn_prediction = [x[:, :, num_free_instance:] for x in prediction]
+            prediction = [x[:, :, :num_free_instance] for x in prediction]
             quality = [
-                x[:, :num_free_instance] if x is not None else None
+                x[:, :, :num_free_instance] if x is not None else None
                 for x in quality
             ]
             output.update(
@@ -714,13 +781,10 @@ class Sparse4DHead(BaseModule):
                 )
                 dn_cls_target = temp_dn_cls_target
                 valid_mask = temp_valid_mask
-            dn_instance_feature = instance_feature[:, num_free_instance:]
-            dn_anchor = anchor[:, num_free_instance:]
-            instance_feature = instance_feature[:, :num_free_instance]
-            anchor = anchor[:, :num_free_instance]
-            cls = cls[:, :num_free_instance]
 
             # cache dn_metas for temporal denoising
+            dn_instance_feature = instance_feature[:, :, num_free_instance:]
+            dn_anchor = anchor[:, :, num_free_instance:]
             self.sampler.cache_dn(
                 dn_instance_feature,
                 dn_anchor,
@@ -728,6 +792,12 @@ class Sparse4DHead(BaseModule):
                 valid_mask,
                 dn_id_target,
             )
+
+            # split off learned queries for caching
+            instance_feature = instance_feature[:, :, :num_free_instance]
+            anchor = anchor[:, :, :num_free_instance]
+            cls = cls[:, :, :num_free_instance]
+
         output.update(
             {
                 "classification": classification,
@@ -739,11 +809,12 @@ class Sparse4DHead(BaseModule):
         if not self.training:
             # assign instance_inds to all predictions for inference
             instance_inds = self.instance_bank.get_instance_ind(
-                cls, anchor, self.decoder.score_threshold
+                cls, self.decoder.score_threshold
             )
             output["instance_inds"] = instance_inds
         else:
             output["instance_inds"] = None
+
         # cache current instances for temporal modeling
         self.instance_bank.cache(
             instance_feature,
@@ -759,7 +830,6 @@ class Sparse4DHead(BaseModule):
         gt_cls = [bs.gt_instances_3d.labels_3d for bs in batch_data_samples]
         gt_reg = [bs.gt_instances_3d.bboxes_3d for bs in batch_data_samples]
         gt_id = [bs.gt_instances_3d.instance_inds for bs in batch_data_samples]
-        num_gt = [len(x) for x in gt_cls]
         # ===================== prediction losses ======================
         cls_scores = model_outs["classification"]
         reg_preds = model_outs["prediction"]
@@ -770,7 +840,7 @@ class Sparse4DHead(BaseModule):
         if prev_instance_inds is None:
             prev_instance_inds = [None for i in range(batch_size)]
         else:
-            # if not mask, set to None
+            # if not mask (not the same sequence), set to None
             prev_instance_inds = [
                 prev_instance_inds[bs] if self.instance_bank.mask[bs] else None
                 for bs in range(batch_size)
@@ -778,7 +848,7 @@ class Sparse4DHead(BaseModule):
         for decoder_idx, (cls, reg, qt) in enumerate(
             zip(cls_scores, reg_preds, quality)
         ):
-            # TODO move code in this for loop to a separate function
+            # TODO move code to compute loss on a given decoder layer to a separate method
             reg = reg[..., : len(self.reg_weights)]
             cls_target, reg_target, reg_weights, id_target = self.sampler.sample(
                 cls,
@@ -786,37 +856,42 @@ class Sparse4DHead(BaseModule):
                 gt_cls,
                 gt_reg,
                 gt_id,
-                # only use prev_instance_inds if self.supervise_qc and not single_frame_decoder output
+                # only use prev_instance_inds if self.sampler.supervise_qc and not single_frame_decoder output
                 prev_instance_inds if decoder_idx >= self.num_single_frame_decoder else None,
             )
             reg_target = reg_target[..., : len(self.reg_weights)]
             mask = torch.logical_not(torch.all(reg_target == 0, dim=-1))
 
             num_pos = max(
-                reduce_mean(torch.sum(mask).to(dtype=reg.dtype)), 1.0
+                reduce_mean(torch.sum(mask).to(dtype=reg.dtype)).item(),
+                1.0
             )
+            confidences = cls.max(dim=-1).values.sigmoid()
             if self.cls_threshold_to_reg > 0:
                 threshold = self.cls_threshold_to_reg
                 mask = torch.logical_and(
-                    mask, cls.max(dim=-1).values.sigmoid() > threshold
+                    mask, confidences > threshold
                 )
 
-            cls_flattened = cls.flatten(end_dim=1)
-            cls_target = cls_target.flatten(end_dim=1)
+            # flatten batch, num group, num query dims
+            cls_target = cls_target.flatten()
             cls_loss = self.loss_cls(
-                cls_flattened, cls_target, avg_factor=num_pos)
+                cls.flatten(end_dim=2),
+                cls_target,
+                avg_factor=num_pos)
 
-            mask = mask.reshape(-1)
-            reg_weights = reg_weights * reg.new_tensor(self.reg_weights)
-            reg_target = reg_target.flatten(end_dim=1)[mask]
-            reg = reg.flatten(end_dim=1)[mask]
-            reg_weights = reg_weights.flatten(end_dim=1)[mask]
+            # mask determines which elements to consider for regression loss
+            mask = mask.flatten()
+            reg_weights *= self.reg_weights.to(reg_weights.device)
+            reg_target = reg_target.flatten(end_dim=2)[mask]
+            reg = reg.flatten(end_dim=2)[mask]
+            reg_weights = reg_weights.flatten(end_dim=2)[mask]
             reg_target = torch.where(
                 reg_target.isnan(), reg.new_tensor(0.0), reg_target
             )
             cls_target = cls_target[mask]
             if qt is not None:
-                qt = qt.flatten(end_dim=1)[mask]
+                qt = qt.flatten(end_dim=2)[mask]
 
             reg_loss = self.loss_reg(
                 reg,
@@ -832,30 +907,38 @@ class Sparse4DHead(BaseModule):
             output.update(reg_loss)
 
             # compute metrics for query consistency
-            qc_metrics = []
-
-            confidences = cls.max(dim=-1).values.sigmoid()
-            for bs, (gt_id_i, conf_i, id_target_i, prev_instance_inds_i) in enumerate(zip(gt_id, confidences, id_target, prev_instance_inds)):
-                qc_metrics.append(self.compute_qc_metrics(
-                    gt_id_i, conf_i, id_target_i, prev_instance_inds_i))
-            for key in qc_metrics[0].keys():
-                val = [x[key] for x in qc_metrics]
-                val = torch.stack(val).nanmean()  # account for nan entries
+            qc_metrics = self.compute_qc_metrics(
+                gt_id, 
+                confidences, 
+                id_target, 
+                prev_instance_inds if decoder_idx >= self.num_single_frame_decoder else None,
+            )
+            for key, val in qc_metrics.items():
                 if not val.isnan():
                     # add decoder suffix to qc metrics
-                    output["qc_metrics/"+key+f"_{decoder_idx}"] = val
+                    output[f"qc_metrics/{key}_{decoder_idx}"] = val
 
-        # for the final layer, cache the id_target for the next timestep
+        # cache the id_target of the final layer for the next timestep
         # assuming non-zero decoder layers
-        bs, k = self.instance_bank.cached_indices.shape
-        batch_indices = torch.arange(
-            bs, device=id_target.device).unsqueeze(-1).expand(-1, k)
-        # cache id target to intsance_inds for the next timestep
-        self.instance_bank.instance_inds_training = id_target[batch_indices, self.instance_bank.cached_indices]
-        if "dn_prediction" not in model_outs:
-            return output
+        bs, num_groups, k = self.instance_bank.cached_indices.shape
+        batch_indices = torch.arange(bs).view(
+            -1, 1, 1).expand(-1, num_groups, k)
 
-        # ===================== denoising losses ======================
+        group_indices = torch.arange(num_groups).view(
+            1, -1, 1).expand(bs, -1, k)
+        # cache id target to intsance_inds for the next timestep
+        self.instance_bank.instance_inds_training = id_target[
+            batch_indices, group_indices,
+            self.instance_bank.cached_indices]
+
+        # compute losses on dn queries
+        if "dn_prediction" in model_outs:
+            dn_losses = self.compute_dn_losses(model_outs)
+            output.update(dn_losses)
+
+        return output
+
+    def compute_dn_losses(self, model_outs):
         dn_cls_scores = model_outs["dn_classification"]
         dn_reg_preds = model_outs["dn_prediction"]
 
@@ -867,6 +950,8 @@ class Sparse4DHead(BaseModule):
             reg_weights,
             num_dn_pos,
         ) = self.prepare_for_dn_loss(model_outs)
+
+        output = {}
         for decoder_idx, (cls, reg) in enumerate(
             zip(dn_cls_scores, dn_reg_preds)
         ):
@@ -874,6 +959,9 @@ class Sparse4DHead(BaseModule):
                 "temp_dn_valid_mask" in model_outs
                 and decoder_idx == self.num_single_frame_decoder
             ):
+                """
+                Update variables with temp variants
+                """
                 (
                     dn_valid_mask,
                     dn_cls_target,
@@ -884,12 +972,12 @@ class Sparse4DHead(BaseModule):
                 ) = self.prepare_for_dn_loss(model_outs, prefix="temp_")
 
             cls_loss = self.loss_cls(
-                cls.flatten(end_dim=1)[dn_valid_mask],
+                cls.flatten(end_dim=2)[dn_valid_mask],
                 dn_cls_target,
                 avg_factor=num_dn_pos,
             )
             reg_loss = self.loss_reg(
-                reg.flatten(end_dim=1)[dn_valid_mask][dn_pos_mask][
+                reg.flatten(end_dim=2)[dn_valid_mask][dn_pos_mask][
                     ..., : len(self.reg_weights)
                 ],
                 dn_reg_target,
@@ -902,91 +990,127 @@ class Sparse4DHead(BaseModule):
         return output
 
     def compute_qc_metrics(self, gt_id, conf, id_target, prev_instance_inds=None):
-        if prev_instance_inds is not None:
-            num_temp_instances = self.instance_bank.num_temp_instances
-        else:
+        """
+        Compute query consistency metrics
+        Averaged over all objects in all samples in the batch (weighted more towards samples with more objects)
+        TODO currently does not correctly split tq/pq for multi-frame decoder layers (decoder layer > 1) and first frame of sequence.
+        In this scenario, prev_instance_inds = [None] *batch_size, and all the preds are technically pq.
+        Current behaviour is to still split the preds assuming there are both tq and pq present
+        """
+        if prev_instance_inds is None or all([x is None for x in prev_instance_inds]):
             num_temp_instances = 0
-        tq_conf, pq_conf = conf[:num_temp_instances], conf[num_temp_instances:]
-        tq_id_target, pq_id_target = id_target[:
-                                               num_temp_instances], id_target[num_temp_instances:]
-        # num_gt = gt_id.shape[0] # for debugging purposes
-
-        if prev_instance_inds is not None:
-            # Convert instance_inds to a tensor and filter out -1 values
-            valid_prev_instance_inds = prev_instance_inds[prev_instance_inds != -1]
-            # how does this work with different batch sizes, num gt?
         else:
-            valid_prev_instance_inds = torch.empty(
-                (conf.shape[0], 0), dtype=torch.long, device=conf.device)
+            num_temp_instances = self.instance_bank.num_temp_instances
 
-        # Create a mask for which pq were in prev frame
-        prev_pq_mask = torch.zeros_like(
-            pq_id_target, dtype=torch.bool)  # (num_pq)
-        prev_pq_mask = torch.isin(pq_id_target, valid_prev_instance_inds)
+        batch_size = len(gt_id)
+        tq_conf, pq_conf = conf[:, :, :num_temp_instances], conf[:,:, num_temp_instances:]
+        tq_id_target, pq_id_target = id_target[:, :, :num_temp_instances], id_target[:, :, num_temp_instances:]
+        device = pq_conf.device
 
-        # Create a mask for current IDs, check not -1
-        pos_pq_mask = pq_id_target != -1
+        if prev_instance_inds is None or all([x is None for x in prev_instance_inds]):
+            valid_prev_instance_inds = [torch.empty(
+                (0,), device=conf.device) for _ in range(batch_size)]
+        else:
+            # Convert instance_inds to a tensor and filter out UNTRACKED_ID values
+            valid_prev_instance_inds = [
+                inds[inds != UNTRACKED_ID] if inds is not None else torch.empty(
+                    (0,), device=device)
+                for inds in prev_instance_inds
+            ]
 
+        # Create a mask for which pq were in prev frame, (bs, num_temp_instances)
+        prev_pq_mask = torch.stack([torch.isin(pq_id_target_i, valid_prev_instance_inds_i) for (
+            pq_id_target_i, valid_prev_instance_inds_i) in zip(pq_id_target, valid_prev_instance_inds)])
+        # Create a mask for current IDs, check not UNTRACKED_ID
+        pos_pq_mask = pq_id_target != UNTRACKED_ID
         # Newborn mask is true where the pq pred is pos in curr but not in prev_mask
         newborn_mask = pos_pq_mask & ~prev_pq_mask
-        # pq_tp is true when the pq is assigned (!=-1) and it is a newborn gt (not in prev frame)
+        # pq_tp is true when the pq is assigned (!=UNTRACKED_iD) and it is a newborn gt (not in prev frame)
         pq_tp = newborn_mask.sum()
         # pq_fp: pq assigned but it is not a newborn gt (it was a prev tracked obj)
         pq_fp = pos_pq_mask.sum() - pq_tp
+
         # pq_fn: a newborn gt that was assigned to a tq, not a hinderance to query consistency, ignore
         metric_dict = dict(
-            pq_tp_conf=pq_conf[newborn_mask].mean(),
-            pq_fp_conf=pq_conf[pos_pq_mask & prev_pq_mask].mean(),
-            pq_neg_conf=pq_conf[~pos_pq_mask].mean(),
+            pq_tp_conf=pq_conf[newborn_mask].nanmean(),
+            pq_fp_conf=pq_conf[pos_pq_mask & prev_pq_mask].nanmean(),
+            pq_neg_conf=pq_conf[~pos_pq_mask].nanmean(),
             # of the total pos pq predictions, how many were actual newborn obj
-            pq_precision=pq_tp/(pq_tp+pq_fp),
+            pq_precision=pq_tp / (pq_tp + pq_fp) if pq_tp + \
+            pq_fp > 0 else torch.tensor(0.0),
         )
-        if num_temp_instances > 0:
-            pos_tq_mask = tq_id_target != -1
+
+        # redundant condition, but keeping for clarity
+        if num_temp_instances > 0 and prev_instance_inds is not None and not all([x is None for x in prev_instance_inds]):
+            pos_tq_mask = tq_id_target != UNTRACKED_ID
             # tq_tp: tq assigned (!=-1) and it was the same previously tracked obj
-            tq_tp_mask = (tq_id_target == prev_instance_inds) & pos_tq_mask
+            tq_tp_mask = torch.stack([
+                torch.zeros_like(tq_id_target_i, dtype=torch.bool)
+                if prev_instance_inds_i is None else
+                (tq_id_target_i == prev_instance_inds_i) & pos_tq_mask_i
+                for (tq_id_target_i, prev_instance_inds_i, pos_tq_mask_i)
+                in zip(tq_id_target, prev_instance_inds, pos_tq_mask)
+            ])
             tq_tp = tq_tp_mask.sum()
-            # tq_fp: tq assigned (!=-1) and it was a newborn gt OR it was a different gt
-            tq_fp_mask = pos_tq_mask & (tq_id_target != prev_instance_inds)
+
+            tq_match_mask = torch.stack([
+                torch.ones_like(tq_id_target_i, dtype=torch.bool) 
+                if prev_instance_inds_i is None else
+                tq_id_target_i == prev_instance_inds_i  # tq_id_target_i matches prev_instance_inds_i
+                for (tq_id_target_i, prev_instance_inds_i)
+                in zip(tq_id_target, prev_instance_inds) # iterate over batch
+            ])
+            # tq_fp: tq assigned (!=UNTRACKED_ID) and it was a different gt
+            # handle the case of prev_instance_ind[i] being none
+            tq_fp_mask = pos_tq_mask & (~tq_match_mask)
             tq_fp = tq_fp_mask.sum()
-            # tq_fn: the gt is in current frame but not assigned to the same TQ
-            tq_fn_mask = torch.isin(prev_instance_inds, gt_id) & ~tq_tp_mask
+
+            carryover_mask = torch.stack([
+                torch.zeros_like(tq_id_target_i, dtype=torch.bool)
+                if prev_instance_inds_i is None else
+                torch.isin(prev_instance_inds_i, gt_id_i) # object was in prev frame and is in current frame
+                for (tq_id_target_i, prev_instance_inds_i, gt_id_i)
+                in zip(tq_id_target, prev_instance_inds, gt_id) # iterate over samples in batch
+            ])
+            # tq_fn: prev_inst is in curr frame but corresponding query is not a tp
+            tq_fn_mask = carryover_mask & ~tq_tp_mask
             tq_fn = tq_fn_mask.sum()
+
             metric_dict.update(
-                tq_tp_conf=tq_conf[tq_tp_mask].mean(),
-                tq_fp_conf=tq_conf[tq_fp_mask].mean(),
-                tq_fn_conf=tq_conf[tq_fn_mask].mean(),
+                tq_tp_conf=tq_conf[tq_tp_mask].nanmean(),
+                tq_fp_conf=tq_conf[tq_fp_mask].nanmean(),
+                tq_fn_conf=tq_conf[tq_fn_mask].nanmean(),
                 # of the total pos tq predictions, how many were actual prev tracked obj
-                tq_precision=tq_tp/(tq_tp+tq_fp),
+                tq_precision=tq_tp / (tq_tp + tq_fp) if tq_tp + \
+                tq_fp > 0 else torch.tensor(0.0, device=device),
                 # of the total tracked obj that are also in current frame, how many maintained query consistency
-                tq_recall=tq_tp/(tq_tp+tq_fn),
+                tq_recall=tq_tp / (tq_tp + tq_fn) if tq_tp + \
+                tq_fn > 0 else torch.tensor(0.0, device=device),
             )
-        else:
-            device = pq_conf.device
-            metric_dict.update(
-                tq_tp_conf=torch.tensor(torch.nan, device=device),
-                tq_fp_conf=torch.tensor(torch.nan, device=device),
-                tq_fn_conf=torch.tensor(torch.nan, device=device),
-                tq_precision=torch.tensor(torch.nan, device=device),
-                tq_recall=torch.tensor(torch.nan, device=device),
-            )
+
         return metric_dict
 
     def prepare_for_dn_loss(self, model_outs, prefix=""):
-        dn_valid_mask = model_outs[f"{prefix}dn_valid_mask"].flatten(end_dim=1)
+        """
+        Prepare the outputs for dn loss calculation
+        Flatten along batch and other dims, filter out invalid instances, and get the number of positive instances
+        """
+        dn_valid_mask = model_outs[f"{prefix}dn_valid_mask"].flatten(
+            end_dim=2)
         dn_cls_target = model_outs[f"{prefix}dn_cls_target"].flatten(
-            end_dim=1
+            end_dim=2
         )[dn_valid_mask]
         dn_reg_target = model_outs[f"{prefix}dn_reg_target"].flatten(
-            end_dim=1
+            end_dim=2
         )[dn_valid_mask][..., : len(self.reg_weights)]
-        dn_pos_mask = dn_cls_target >= 0
+        dn_pos_mask = (dn_cls_target != NEG_DN_CLS_TARGET) & (
+            dn_cls_target != PAD_CLS_TARGET)
         dn_reg_target = dn_reg_target[dn_pos_mask]
-        reg_weights = dn_reg_target.new_tensor(self.reg_weights)[None].tile(
+        reg_weights = self.reg_weights[None].tile(
             dn_reg_target.shape[0], 1
-        )
+        ).to(dn_reg_target.device)
         num_dn_pos = max(
-            reduce_mean(torch.sum(dn_valid_mask).to(dtype=reg_weights.dtype)),
+            reduce_mean(torch.sum(dn_valid_mask)).item(),
             1.0,
         )
         return (
@@ -999,6 +1123,7 @@ class Sparse4DHead(BaseModule):
         )
 
     def post_process(self, model_outs, output_idx=-1):
+        # squeeze on the group dim
         return self.decoder.decode(
             model_outs["classification"],
             model_outs["prediction"],
