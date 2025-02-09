@@ -562,7 +562,7 @@ class Sparse4DHead(BaseModule):
                 dn_id_target,
             ) = dn_metas
             num_dn_groups = dn_anchor.shape[1]
-            num_dn_anchor = dn_anchor.shape[2]  # num dn in a single group
+            dn_per_dn_grp = dn_anchor.shape[2]  # num dn in a single dn group
             # check anchor dimension. If they don't match, pad dn_anchor with zeros
             if dn_anchor.shape[-1] != anchor.shape[-1]:
                 remain_state_dims = anchor.shape[-1] - dn_anchor.shape[-1]
@@ -570,7 +570,7 @@ class Sparse4DHead(BaseModule):
                     [
                         dn_anchor,
                         dn_anchor.new_zeros(
-                            batch_size, num_dn_groups, num_dn_anchor, remain_state_dims
+                            batch_size, num_dn_groups, dn_per_dn_grp, remain_state_dims
                         ),
                     ],
                     dim=-1,
@@ -587,13 +587,14 @@ class Sparse4DHead(BaseModule):
                 raise NotImplementedError(
                     "multiple dn groups per learned group is not supported yet")
             # zero initialize the instance_features of dn instances
+            dn_per_lrn_grp = dn_per_dn_grp * dn_grp_per_learned_grp
             instance_feature = torch.cat(
                 [
                     instance_feature,
                     instance_feature.new_zeros(
                         batch_size,
                         num_learned_grp,
-                        num_dn_anchor * dn_grp_per_learned_grp,
+                        dn_per_lrn_grp,
                         instance_feature.shape[-1]
                     ),
                 ],
@@ -601,13 +602,13 @@ class Sparse4DHead(BaseModule):
             )
             # construct attn mask
             num_instance = instance_feature.shape[2]
-            num_free_instance = num_instance - num_dn_anchor
+            num_free_instance = num_instance - dn_per_dn_grp
             attn_mask = anchor.new_ones(
                 (num_instance, num_instance), dtype=torch.bool
             )
             # mask false means attend, so here we attend to the free_instances
             attn_mask[:num_free_instance, :num_free_instance] = False
-            attn_mask[num_free_instance:, num_free_instance:] = dn_attn_mask
+            attn_mask[num_free_instance:, num_free_instance:] = dn_attn_mask[:dn_per_lrn_grp, :dn_per_lrn_grp]
 
         anchor_embed = self.anchor_encoder(anchor)
 
@@ -1110,7 +1111,7 @@ class Sparse4DHead(BaseModule):
             dn_reg_target.shape[0], 1
         ).to(dn_reg_target.device)
         num_dn_pos = max(
-            reduce_mean(torch.sum(dn_valid_mask)).item(),
+            reduce_mean(torch.sum(dn_valid_mask, dtype=reg_weights.dtype)).item(),
             1.0,
         )
         return (
