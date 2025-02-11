@@ -238,7 +238,7 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
                 cls_target_i[group_idx, pq_mask[group_idx]] = cls_target_pq[group_idx]
                 box_target_i[group_idx, pq_mask[group_idx]] = box_target_pq[group_idx]
                 reg_weights_i[group_idx, pq_mask[group_idx]] = reg_weights_pq[group_idx]
-                id_target_i[group_idx, pq_mask[group_idx]] = id_target_pq[group_idx]
+                id_target_i[group_idx, pq_mask[group_idx]] = id_target_pq[group_idx].to(torch.long)
 
         return cls_target_i, box_target_i, reg_weights_i, id_target_i
 

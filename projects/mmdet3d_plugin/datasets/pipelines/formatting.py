@@ -1,5 +1,6 @@
 
 import numpy as np
+import torch
 from mmdet3d.datasets.transforms.formating import Pack3DDetInputs, to_tensor
 from mmdet3d.registry import TRANSFORMS
 from mmdet3d.structures import BaseInstance3DBoxes, Det3DDataSample, PointData
@@ -71,7 +72,8 @@ class Pack3DTrackInputs(Pack3DDetInputs):
 
         # tracking fields
         if 'instance_inds' in results:
-            results['instance_inds'] = to_tensor(results['instance_inds'])
+            results['instance_inds'] = to_tensor(
+                results['instance_inds']).to(torch.long)
 
         for key in ['gt_forecasting_locs', 'gt_forecasting_masks', 'gt_forecasting_types']:
             if key in results:
