@@ -263,7 +263,7 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
         cls_target_i = [torch.full_like(cls_pred[..., 0], num_cls, dtype=torch.long) for cls_pred in cls_pred_act_i]
         box_target_i = [torch.zeros_like(box_pred) for box_pred in box_pred_i]
         reg_weights_i = [torch.zeros_like(box_pred) for box_pred in box_pred_i]
-        id_target_i = [id_gt_i.new_full((cls_pred.shape[0],), UNTRACKED_ID) for cls_pred in cls_pred_act_i]
+        id_target_i = [id_gt_i.new_full((cls_pred.shape[0],), UNTRACKED_ID, dtype=torch.long) for cls_pred in cls_pred_act_i]
 
         # in the case of no gt objects to assign
         if len(cls_gt_i) == 0:
