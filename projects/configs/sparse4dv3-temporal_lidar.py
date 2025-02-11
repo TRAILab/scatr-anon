@@ -12,13 +12,12 @@ log_level = "INFO"
 batch_size = 6
 num_gpus = 8
 total_batch_size = batch_size * num_gpus
-input_shape = (704, 256)
 num_epochs = 12
 checkpoint_epoch_interval = 1
 val_epoch_interval = 1
 
-short_name = "lidar-supervise_qc"
-work_dir = f"work_dirs/sparse4dv3-temporal_lidar_1x{num_gpus}_bs{batch_size}_{input_shape[1]}x{input_shape[0]}-{num_epochs}e_{short_name}"
+short_name = "lidar-baseline"
+work_dir = f"work_dirs/sparse4dv3-temporal_lidar_1x{num_gpus}_bs{batch_size}-{num_epochs}e_{short_name}"
 
 load_from = 'ckpts/focalformer3d_converted/DeformFormer3D_L_iterimg_ep20_mAP655_NDS707.pth'
 resume_from = None
@@ -119,6 +118,37 @@ param_scheduler = [
         eta_min=lr * 1e-3,
         convert_to_iter_based=True,
     )]
+# param_scheduler = [
+#     dict(
+#         type='OneCycleLR',
+#         eta_max=lr,
+#         total_steps=num_epochs,
+#         pct_start=0.4,
+#         div_factor=25.0,
+#         final_div_factor=1e4,
+#         by_epoch=True,
+#         convert_to_iter_based=True
+#     ),
+#     # momentum scheduler
+#     # During the first 8 epochs, momentum increases from 0 to 0.85 / 0.95
+#     # during the next 12 epochs, momentum increases from 0.85 / 0.95 to 1
+#     dict(
+#         type="CosineAnnealingMomentum",
+#         T_max=(0.4 * num_epochs),
+#         eta_min=0.85 / 0.95,
+#         begin=0,
+#         end=(0.4 * num_epochs),
+#         by_epoch=True,
+#         convert_to_iter_based=True),
+#     dict(
+#         type="CosineAnnealingMomentum",
+#         T_max=12,
+#         eta_min=1,
+#         begin=(0.4 * num_epochs),
+#         end=num_epochs,
+#         by_epoch=True,
+#         convert_to_iter_based=True)
+# ]
 
 # runtime settings
 train_cfg = dict(
@@ -131,7 +161,7 @@ test_cfg = dict()
 default_hooks = dict(
     checkpoint=dict(by_epoch=True,
                     interval=checkpoint_epoch_interval),
-    logger=dict(interval=50)
+    logger=dict(interval=500)
 )
 
 disable_ts_ratio = 0.75
