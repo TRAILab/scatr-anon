@@ -20,7 +20,8 @@ short_name = "lidar-baseline"
 work_dir = f"work_dirs/sparse4dv3-temporal_lidar_1x{num_gpus}_bs{batch_size}-{num_epochs}e_{short_name}"
 
 load_from = 'ckpts/focalformer3d_converted/DeformFormer3D_L_iterimg_ep20_mAP655_NDS707.pth'
-resume_from = None
+# resume_from = 'work_dirs/sparse4dv3-temporal_lidar_1x8_bs6-12e_lidar-group/epoch_4.pth'
+# resume=True
 
 tracking_test = True
 class_names = [
@@ -52,6 +53,11 @@ model = dict(
     ),
     pts_bbox_head=dict(
         point_cloud_range=point_cloud_range,
+        instance_bank=dict(
+            num_anchor=300,
+            anchor="_nuscenes_kmeans900.npy",
+            num_temp_instances=200,
+        ),
         refine_layer=dict(
             num_cls={{_base_.num_classes}}, # from dataset
         ),
