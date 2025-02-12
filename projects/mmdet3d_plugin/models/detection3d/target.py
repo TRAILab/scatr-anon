@@ -498,10 +498,7 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
 
         # split instance_feature and anchor into non-dn and dn
         # (bs, num learned grps, num queries, ...)
-        num_dn_per_group = self.max_dn_gt if not self.add_neg_dn else self.max_dn_gt * 2
-        num_dn = num_dn_per_group * (self.num_dn_groups // num_learned_groups)
-        # sanity check, total num non-learned queries
-        assert num_dn == num_anchor - num_normal_anchor, f"num_dn: {num_dn}, num_anchor: {num_anchor}, num_normal_anchor: {num_normal_anchor}"
+        num_dn = num_anchor - num_normal_anchor
         # dn queries
         # (bs, num learned grps, num_dn, ...)
         dn_feat = instance_feature[:, :, -num_dn:]
