@@ -444,11 +444,12 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
         # valid denotes dn queries corresponding to a gt
         valid_mask = (dn_cls_target != PAD_CLS_TARGET) & (dn_cls_target != NEG_DN_CLS_TARGET)
         if self.add_neg_dn:
-            cls_target = (
-                torch.cat([cls_target, cls_target], dim=1)
-                .reshape(self.num_dn_groups, bs, num_gt)
-                .permute(1, 0, 2)
-            )
+            # cls_target = (
+            #     torch.cat([cls_target, cls_target], dim=1)
+            #     .reshape(self.num_dn_groups, bs, num_gt)
+            #     .permute(1, 0, 2)
+            # )
+            cls_target = torch.cat([cls_target, cls_target], dim=2)
             # valid mask denotes dn queries corresponding to a gt or
             # negative dn queries
             valid_mask = torch.logical_or(
