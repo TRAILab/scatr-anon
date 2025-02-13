@@ -22,7 +22,8 @@ class SparseBox3DDecoder(object):
         self.score_threshold = score_threshold
         self.sorted = sorted
 
-    def decode_box(self, box):
+    @staticmethod
+    def decode_box(box):
         yaw = torch.atan2(box[..., SIN_YAW], box[..., COS_YAW])
         box = torch.cat(
             [
