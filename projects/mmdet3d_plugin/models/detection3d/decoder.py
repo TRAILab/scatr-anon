@@ -23,13 +23,13 @@ class SparseBox3DDecoder(object):
         self.sorted = sorted
 
     def decode_box(self, box):
-        yaw = torch.atan2(box[:, SIN_YAW], box[:, COS_YAW])
+        yaw = torch.atan2(box[..., SIN_YAW], box[..., COS_YAW])
         box = torch.cat(
             [
-                box[:, [X, Y, Z]],
-                box[:, [W, L, H]].exp(),
-                yaw[:, None],
-                box[:, VX:],
+                box[..., [X, Y, Z]],
+                box[..., [W, L, H]].exp(),
+                yaw[..., None],
+                box[..., VX:],
             ],
             dim=-1,
         )
