@@ -281,8 +281,7 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
             cls_pred[..., 0], num_cls, dtype=torch.long) for cls_pred in cls_pred_act_i]
         box_target_i = [torch.zeros_like(box_pred) for box_pred in box_pred_i]
         reg_weights_i = [torch.zeros_like(box_pred) for box_pred in box_pred_i]
-        id_target_i = [id_gt_i.new_full(
-            (cls_pred.shape[0],), UNTRACKED_ID) for cls_pred in cls_pred_act_i]
+        id_target_i = [id_gt_i.new_full((cls_pred.shape[0],), UNTRACKED_ID, dtype=torch.long) for cls_pred in cls_pred_act_i]
 
         # in the case of no gt objects to assign
         if len(cls_gt_i) == 0:
@@ -590,10 +589,7 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
 
         # split instance_feature and anchor into non-dn and dn
         # (bs, num learned grps, num queries, ...)
-        num_dn_per_group = self.max_dn_gt if not self.add_neg_dn else self.max_dn_gt * 2
-        num_dn = num_dn_per_group * (self.num_dn_groups // num_learned_groups)
-        # sanity check, total num non-learned queries
-        assert num_dn == num_anchor - num_normal_anchor
+        num_dn = num_anchor - num_normal_anchor
         # dn queries
         # (bs, num learned grps, num_dn, ...)
         dn_feat = instance_feature[:, :, -num_dn:]
