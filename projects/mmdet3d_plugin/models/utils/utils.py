@@ -4,14 +4,14 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
-import torch
-import random
-from torch import nn, Tensor
-import os
-
 import math
+
+import torch
 import torch.nn.functional as F
 from torch import nn
+
+from projects.mmdet3d_plugin.core.box3d import *
+
 
 class MLP(nn.Module):
     """ Very simple multi-layer perceptron (also called FFN)"""
@@ -28,7 +28,6 @@ class MLP(nn.Module):
         return x
 
 def gen_sineembed_for_position_all(pos_tensor):
-    import math
     scale = 2 * math.pi
     dim_t = torch.arange(128, dtype=torch.float32, device=pos_tensor.device)
     dim_t = 10000 ** (2 * (dim_t // 2) / 128)
@@ -65,3 +64,14 @@ def gen_sineembed_for_position(pos_tensor):
         raise ValueError("Unknown pos_tensor shape(-1):{}".format(pos_tensor.size(-1)))
     return pos
 
+
+def get_dense_grid_points(rois, grid_size):
+    num_boxes, _ = rois.shape
+    faked_features = rois.new_ones((grid_size, grid_size))
+    dense_idx = faked_features.nonzero()  # (N, 3) [x_idx, y_idx, z_idx]
+    dense_idx = dense_idx.repeat(num_boxes, 1, 1).float()  # (B, 6x6x6, 3)
+
+    local_roi_size = rois[:, [W, L]]
+    roi_grid_points = (dense_idx + 0.5) / grid_size * local_roi_size.unsqueeze(dim=1) \
+                        - (local_roi_size.unsqueeze(dim=1) / 2)  # (B, 6x6x6, 3)
+    return roi_grid_points

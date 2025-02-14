@@ -177,6 +177,7 @@ class FocalEncoder(nn.Module):
                 in_channels=hidden_channel,
                 out_channels=hidden_channel,
                 kernel_size=3,
+                padding=1,
                 norm_cfg=dict(type='BN'),
                 act_cfg=None
             )

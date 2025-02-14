@@ -1,6 +1,7 @@
 use_deformable_func = True
 embed_dims = 256
 num_heads = 8
+num_learned_groups = 1
 num_dn_groups = 5
 num_temp_dn_groups = 3
 num_decoder = 6
@@ -10,8 +11,8 @@ temporal = True
 drop_out = 0.1
 with_quality_estimation = True
 tracking_threshold = 0.2
-multistage_heatmap = False  # 1 for LiDAR, 2 for fusion, False for no heatmap init
-extra_feat = False  # True for multistage_heatmap
+multistage_heatmap = 1  # 1 for LiDAR, 2 for fusion, False for no heatmap init
+init_pq_with_heatmap = True
 
 voxel_size = [0.075, 0.075, 0.2]
 
@@ -69,31 +70,32 @@ model = dict(
         input_img=False,
         iterbev_wo_img=True,
         multistage_heatmap=multistage_heatmap,
-        extra_feat=extra_feat,
+        extra_feat=init_pq_with_heatmap,
     ),
     pts_bbox_head=dict(
         type="Sparse4DHead",
         cls_threshold_to_reg=0.05,
         decouple_attn=decouple_attn,
-        match_learned_dn_groups=True,
         # focalformer3d_params
-        multistage_heatmap=multistage_heatmap,
-        extra_feat=extra_feat,
         modality="lidar",
-        xy_size=(180, 180),
-        init_pq_with_heatmap=False,  # TODO add support for HM init
         # other sparse4D params
         instance_bank=dict(
             type="InstanceBank",
             num_anchor=900,
-            num_learned_groups=num_dn_groups,
+            num_learned_groups=num_learned_groups,
             num_learned_temp_groups=num_temp_dn_groups,
             embed_dims=embed_dims,
             anchor="_nuscenes_kmeans900.npy",
             anchor_handler=dict(type="SparseBox3DKeyPointsGenerator"),
             num_temp_instances=600 if temporal else -1,
             confidence_decay=0.6,
-            feat_grad=True, # true for multiple learned groups
+            feat_grad=True,  # true for multiple learned groups
+            # heatmap init params
+            heatmap_init=init_pq_with_heatmap,
+            num_heatmap_stages=multistage_heatmap,
+            xy_size=(180, 180),
+            nms_kernel_size=3,
+            num_bbox_pool_points=7,
         ),
         anchor_encoder=dict(
             type="SparseBox3DEncoder",
@@ -192,8 +194,18 @@ model = dict(
                 type="mmdet.CrossEntropyLoss", use_sigmoid=True),
             loss_yawness=dict(type="mmdet.GaussianFocalLoss"),
         ),
-        decoder=dict(type="SparseBox3DDecoder",
-                     score_threshold=tracking_threshold),
+        loss_heatmap=dict(
+            type='mmdet.GaussianFocalLoss',
+            reduction='mean',
+            loss_weight=1.0,
+        ),
+        loss_heatmap_reg=dict(
+            type="mmdet.L1Loss",
+            loss_weight=0.25
+        ),
+        decoder=dict(
+            type="SparseBox3DDecoder",
+            score_threshold=tracking_threshold),
         reg_weights=[2.0] * 3 + [1.0] * 7,
     ),
 )

@@ -3,8 +3,8 @@ from typing import Dict, List, Optional, Union
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from mmcv.cnn import ConvModule, build_conv_layer
+from mmcv.cnn import ConvModule
+from mmdet3d.models.utils import clip_sigmoid
 from mmdet3d.registry import MODELS
 from mmdet3d.structures import Det3DDataSample
 from mmdet.utils import reduce_mean
@@ -13,7 +13,7 @@ from mmengine.model import BaseModule
 from projects.mmdet3d_plugin.models.utils.utils import (
     MLP, gen_sineembed_for_position)
 
-from .detection3d.target import NEG_DN_CLS_TARGET, PAD_CLS_TARGET, UNTRACKED_ID
+from .constants import NEG_DN_CLS_TARGET, PAD_CLS_TARGET, UNTRACKED_ID
 
 __all__ = ["Sparse4DHead"]
 
@@ -32,18 +32,16 @@ class Sparse4DHead(BaseModule):
         # focalformer3d params
         point_cloud_range: List[float],
         modality: str = "camera",
-        multistage_heatmap: Union[int, bool] = False,
-        extra_feat: bool = False,
         use_bevpos_emb: bool = True,
         xy_size: tuple = (180, 180),
-        init_pq_with_heatmap: bool = False,
-        nms_kernel_size: int = 3,
         # sparse4d params
         num_decoder: int = 6,
         num_single_frame_decoder: int = -1,
         temp_graph_model: Optional[Dict] = None,
         loss_cls: Optional[Dict] = None,
         loss_reg: Optional[Dict] = None,
+        loss_heatmap: Optional[Dict] = None,
+        loss_heatmap_reg: Optional[Dict] = None,
         decoder: Optional[Dict] = None,
         sampler: Optional[Dict] = None,
         reg_weights: Optional[List[float]] = None,
@@ -52,7 +50,6 @@ class Sparse4DHead(BaseModule):
         dn_loss_weight: float = 5.0,
         decouple_attn: bool = True,
         init_cfg: Optional[Dict] = None,
-        match_learned_dn_groups: bool = True,
         **kwargs,
     ):
         super(Sparse4DHead, self).__init__(init_cfg)
@@ -87,12 +84,17 @@ class Sparse4DHead(BaseModule):
 
         # =========== build modules ===========
 
+        instance_bank['point_cloud_range'] = point_cloud_range
         self.instance_bank = MODELS.build(instance_bank)
+        sampler['point_cloud_range'] = point_cloud_range
+        sampler['embed_dims'] = self.instance_bank.embed_dims
         self.anchor_encoder = MODELS.build(anchor_encoder)
         self.sampler = MODELS.build(sampler)
         self.decoder = MODELS.build(decoder)
         self.loss_cls = MODELS.build(loss_cls)
         self.loss_reg = MODELS.build(loss_reg)
+        self.loss_heatmap = MODELS.build(loss_heatmap)
+        self.loss_heatmap_reg = MODELS.build(loss_heatmap_reg)
         self.op_config_map = {
             "temp_gnn": [temp_graph_model],
             "gnn": [graph_model],
@@ -121,22 +123,10 @@ class Sparse4DHead(BaseModule):
             self.fc_after = nn.Identity()
         self.num_classes = refine_layer['num_cls']
 
-        # assume num_dn_groups == num_learned_groups
-        # assume the same for temporal groups
-        if not match_learned_dn_groups:
-            raise NotImplementedError(
-                "num_dn_groups must match num_learned_groups")
-        else:
-            # match the number of learned groups to the number of dn groups
-            assert self.instance_bank.num_learned_groups == self.sampler.num_dn_groups
         # focalformer
         self.use_lidar = modality == "lidar"
         self.use_camera = modality == "camera"
-        self.multistage_heatmap = multistage_heatmap
         if self.use_lidar:
-            self.extra_feat = extra_feat
-            if extra_feat:
-                assert self.multistage_heatmap, "extra_feat must be used with multistage_heatmap"
             # gen_sineembed_for_position uses dim=128 for each x and y
             self.pos_embed_learned = MLP(
                 128*2, self.embed_dims, self.embed_dims, 2)
@@ -147,7 +137,11 @@ class Sparse4DHead(BaseModule):
             self.ref_point_norm = self.point_cloud_range[3:] - \
                 self.point_cloud_range[:3]
             self.use_bevpos_emb = use_bevpos_emb
-            self.bev_pos = self.create_2D_grid(*xy_size)
+            self.bev_pos_1 = self.create_2D_grid(*xy_size)
+            self.bev_pos_2 = self.create_2D_grid(
+                xy_size[0] // 2, xy_size[1] // 2) * 2
+            self.bev_pos_4 = self.create_2D_grid(
+                xy_size[0] // 4, xy_size[1] // 4) * 4
             self.dconv = ConvModule(
                 self.embed_dims, self.embed_dims,
                 stride=2, kernel_size=3, padding=1,
@@ -161,12 +155,6 @@ class Sparse4DHead(BaseModule):
                 norm_cfg=dict(type='BN2d'),
             )
 
-            self.init_pq_with_heatmap = init_pq_with_heatmap
-            if self.init_pq_with_heatmap:
-                assert self.multistage_heatmap, "init_pq_with_heatmap must be used with multistage_heatmap"
-            if init_pq_with_heatmap:
-                self.create_heatmap_head()
-            self.nms_kernel_size = nms_kernel_size
 
     def init_weights(self):
         for i, op in enumerate(self.operation_order):
@@ -189,26 +177,6 @@ class Sparse4DHead(BaseModule):
         coord_base = torch.cat([batch_x[None], batch_y[None]], dim=0)[None]
         coord_base = coord_base.view(1, 2, -1).permute(0, 2, 1)
         return coord_base
-
-    def create_heatmap_head(self,):
-        layers = []
-        layers.append(ConvModule(
-            self.embed_dims,
-            self.embed_dims,
-            kernel_size=3,
-            padding=1,
-            conv_cfg=dict(type='Conv2d'),
-            norm_cfg=dict(type='BN2d'),
-        ))
-        layers.append(build_conv_layer(
-            dict(type='Conv2d'),
-            self.embed_dims,
-            self.num_classes,
-            kernel_size=3,
-            padding=1,
-            bias='auto',
-        ))
-        self.heatmap_head = nn.Sequential(*layers)
 
     def graph_model(
         self,
@@ -252,237 +220,32 @@ class Sparse4DHead(BaseModule):
             feature_maps = [feature_maps]
         if self.use_camera:
             batch_size = feature_maps[0].shape[0]
+            multistage_feats = None
+            bev_pos_1 = None
+            multiscale_inputs = None
         else:
             assert self.use_lidar
             batch_size = pts_inputs[0].shape[0]
             # preprocess LiDAR features, following FocalFormer3D focal_decoder.py
             lidar_feat = pts_inputs[0]
-            if self.extra_feat:
-                extra_feats = pts_inputs[1][-1]
-                pts_inputs[1].pop(-1)
+            extra_feats = pts_inputs[1].pop(-1)
             lidar_feat_flatten = lidar_feat.view(
                 batch_size, lidar_feat.shape[1], -1)  # [BS, C, H*W]
-            bev_pos = self.bev_pos.repeat(
-                batch_size, 1, 1).to(lidar_feat.device)
-            bev_pos_2 = self.create_2D_grid(
-                lidar_feat.shape[2] // 2, lidar_feat.shape[2] // 2).repeat(batch_size, 1, 1).to(lidar_feat.device) * 2
-            bev_pos_4 = self.create_2D_grid(
-                lidar_feat.shape[2] // 4, lidar_feat.shape[2] // 4).repeat(batch_size, 1, 1).to(lidar_feat.device) * 4
+            
+            bev_pos_1 = self.bev_pos_1.repeat(batch_size, 1, 1).to(lidar_feat.device)
+            bev_pos_2 = self.bev_pos_2.repeat(batch_size, 1, 1).to(lidar_feat.device)
+            bev_pos_4 = self.bev_pos_4.repeat(batch_size, 1, 1).to(lidar_feat.device)
+            bev_pos = torch.cat([bev_pos_1, bev_pos_2, bev_pos_4], dim=1)
 
-        # TODO move the following code to a separate function
-        if not self.multistage_heatmap and self.use_lidar:
-            if self.init_pq_with_heatmap:
-                dense_heatmap = self.heatmap_head(lidar_feat)
-            # iterbev_wo_img always true in head in FocalFormer3D
-            if isinstance(pts_inputs[1], (list, tuple)):
-                # if using extra_feat
-                new_lidar_feat = pts_inputs[1][-1]
-            else:  # no extra_feat
-                new_lidar_feat = pts_inputs[1]
-            lidar_feat_flatten = new_lidar_feat.view(
-                *lidar_feat_flatten.shape)
-            if self.init_pq_with_heatmap:
-                # do heatmap PQ initialization
-                dense_heatmap_img = self.heatmap_head_img(
-                    new_lidar_feat.view(lidar_feat.shape))  # [BS, num_classes, H, W]
-                # average both heatmaps
-                heatmap = (dense_heatmap.detach().sigmoid() +
-                           dense_heatmap_img.detach().sigmoid()) / 2
-
-                if self.use_camera or self.iterbev_wo_img:
-                    heatmap_train = [dense_heatmap, dense_heatmap_img]
-                else:
-                    heatmap_train = dense_heatmap
-
-                padding = self.nms_kernel_size // 2
-                local_max = torch.zeros_like(heatmap)
-                # equals to nms radius = voxel_size * out_size_factor * kenel_size
-                local_max_inner = F.max_pool2d(
-                    heatmap, kernel_size=self.nms_kernel_size, stride=1, padding=0)
-                local_max[:, :, padding:(-padding),
-                          padding:(-padding)] = local_max_inner
-                # for Pedestrian & Traffic_cone in nuScenes
-                if self.test_cfg['dataset'] == 'nuScenes':
-                    local_max[:, 8, ] = F.max_pool2d(
-                        heatmap[:, 8], kernel_size=1, stride=1, padding=0)
-                    local_max[:, 9, ] = F.max_pool2d(
-                        heatmap[:, 9], kernel_size=1, stride=1, padding=0)
-                # for Pedestrian & Cyclist in Waymo
-                elif self.test_cfg['dataset'] == 'Waymo':
-                    local_max[:, 1, ] = F.max_pool2d(
-                        heatmap[:, 1], kernel_size=1, stride=1, padding=0)
-                    local_max[:, 2, ] = F.max_pool2d(
-                        heatmap[:, 2], kernel_size=1, stride=1, padding=0)
-                heatmap = heatmap * (heatmap == local_max)
-                heatmap = heatmap.view(batch_size, heatmap.shape[1], -1)
-
-                # top #num_proposals among all classes
-                top_proposals = heatmap.view(
-                    batch_size, -1).argsort(dim=-1, descending=True)[..., :self.num_proposals]
-                top_proposals_class = top_proposals // heatmap.shape[-1]
-                top_proposals_index = top_proposals % heatmap.shape[-1]
-                query_feat = lidar_feat_flatten.gather(
-                    index=top_proposals_index[:, None, :].expand(-1, lidar_feat_flatten.shape[1], -1), dim=-1)
-                self.query_labels = top_proposals_class
-
-                # add category embedding
-                one_hot = F.one_hot(top_proposals_class,
-                                    num_classes=self.num_classes).permute(0, 2, 1)
-                query_cat_encoding = self.class_encoding(one_hot.float())
-                query_feat += query_cat_encoding
-
-                query_pos = bev_pos.gather(index=top_proposals_index[:, None, :].permute(
-                    0, 2, 1).expand(-1, -1, bev_pos.shape[-1]), dim=1)
-                query_heatmap_score = heatmap.gather(
-                    index=top_proposals_index[:, None, :].expand(-1, self.num_classes, -1), dim=-1)
-        elif self.use_lidar:  # multistage_heatmap, capture hard FN
-            dense_heatmap = self.heatmap_head(lidar_feat)  # original
-
-            multistage_feats = pts_inputs[1]
-            if self.reuse_first_heatmap:
-                multistage_feats.insert(0, lidar_feat)
-
-            query_labels = []
-            query_feats = []
-            query_poses = []
-            query_heatmap_scores = []
-            acc_masks = torch.ones_like(dense_heatmap).view(batch_size, -1)
-            multistage_masks = []
-            multistage_masks_independent_visualize = []
-            heatmap_train = []
-            for i in range(self.multistage_heatmap):
-                if i == 0 and self.reuse_first_heatmap:
-                    # do not support heatmap_box, see FocalFormer3D
-
-                    heatmap = dense_heatmap.detach().sigmoid()
-                    heatmap_train.append(dense_heatmap)
-                    multistage_masks.append(
-                        acc_masks.view(*heatmap.shape).clone())
-                    # remove early positive
-                    heatmap = heatmap * acc_masks.view(*heatmap.shape)
-                else:
-                    dense_heatmap_img = self.heatmap_head_img[i](
-                        multistage_feats[i])
-                    # do not support heatmap_box, see FocalFormer3D
-
-                    heatmap = dense_heatmap_img.detach().sigmoid()
-                    if i == 0:
-                        heatmap_train.append(dense_heatmap)
-                        multistage_masks.append(
-                            acc_masks.view(*heatmap.shape).clone())
-                    # remove early positive
-                    heatmap = heatmap * acc_masks.view(*heatmap.shape)
-                    heatmap_train.append(dense_heatmap_img)
-                    multistage_masks.append(
-                        acc_masks.view(*heatmap.shape).clone())
-
-                lidar_feat_flatten = multistage_feats[i].view(
-                    *lidar_feat_flatten.shape)
-
-                padding = self.nms_kernel_size // 2
-                local_max = torch.zeros_like(heatmap)
-                # equals to nms radius = voxel_size * out_size_factor * kenel_size
-                local_max_inner = F.max_pool2d(
-                    heatmap, kernel_size=self.nms_kernel_size, stride=1, padding=0)
-                local_max[:, :, padding:(-padding),
-                          padding:(-padding)] = local_max_inner
-                # for Pedestrian & Traffic_cone in nuScenes
-                if self.test_cfg['dataset'] == 'nuScenes':
-                    local_max[:, 8, ] = F.max_pool2d(
-                        heatmap[:, 8], kernel_size=1, stride=1, padding=0)
-                    local_max[:, 9, ] = F.max_pool2d(
-                        heatmap[:, 9], kernel_size=1, stride=1, padding=0)
-                # for Pedestrian & Cyclist in Waymo
-                elif self.test_cfg['dataset'] == 'Waymo':
-                    local_max[:, 1, ] = F.max_pool2d(
-                        heatmap[:, 1], kernel_size=1, stride=1, padding=0)
-                    local_max[:, 2, ] = F.max_pool2d(
-                        heatmap[:, 2], kernel_size=1, stride=1, padding=0)
-                heatmap = heatmap * (heatmap == local_max)
-                heatmap = heatmap.view(batch_size, heatmap.shape[1], -1)
-
-                # top #num_proposals among all classes
-                top_proposals = torch.topk(heatmap.view(
-                    batch_size, -1), k=self.num_proposals, dim=-1, largest=True, sorted=False).indices
-                # top_proposals = heatmap.view(batch_size, -1).argsort(dim=-1, descending=True)[..., :self.num_proposals]
-                top_proposals_class = top_proposals // heatmap.shape[-1]
-                top_proposals_index = top_proposals % heatmap.shape[-1]
-                query_feat = lidar_feat_flatten.gather(
-                    index=top_proposals_index[:, None, :].expand(-1, lidar_feat_flatten.shape[1], -1), dim=-1)
-
-                query_labels.append(top_proposals_class)
-
-                # add category embedding
-                one_hot = F.one_hot(
-                    top_proposals_class, num_classes=self.num_classes).permute(0, 2, 1)
-                query_cat_encoding = self.class_encoding(one_hot.float())
-
-                query_feat += query_cat_encoding
-                query_pos = bev_pos.gather(index=top_proposals_index[:, None, :].permute(
-                    0, 2, 1).expand(-1, -1, bev_pos.shape[-1]), dim=1)
-                query_heatmap_score = heatmap.gather(
-                    index=top_proposals_index[:, None, :].expand(-1, self.num_classes, -1), dim=-1)
-
-                query_feats.append(query_feat)
-                query_poses.append(query_pos)
-                query_heatmap_scores.append(query_heatmap_score)
-
-                # do not support heatmap_box, see FocalFormer3D
-
-                ################ select to ignore ######################
-                # only use mask_heatmap_mode=='poscls', following FocalFormer3D
-                selected_mask = acc_masks.new_zeros(
-                    batch_size, self.num_classes * heatmap.shape[-1])
-                selected_mask.scatter_(index=top_proposals, dim=1, src=torch.ones_like(
-                    top_proposals, dtype=acc_masks.dtype))
-
-                selected_mask = selected_mask.reshape(*dense_heatmap.shape)
-                # masking by pooling
-                selected_mask_kernel = F.max_pool2d(
-                    selected_mask, kernel_size=self.nms_kernel_size, stride=1, padding=self.nms_kernel_size // 2)
-                # for Pedestrian & Traffic_cone in nuScenes
-                if self.test_cfg['dataset'] == 'nuScenes':
-                    selected_mask_kernel[:, 8:10] = F.max_pool2d(
-                        selected_mask[:, 8:10], kernel_size=1, stride=1, padding=0)
-                # for Pedestrian & Cyclist in Waymo
-                elif self.test_cfg['dataset'] == 'Waymo':
-                    selected_mask_kernel[:, 1:3] = F.max_pool2d(
-                        selected_mask[:, 1:3], kernel_size=1, stride=1, padding=0)
-
-                acc_masks = acc_masks * \
-                    (1.-selected_mask_kernel).view(*acc_masks.shape)
-
-            self.query_labels = torch.cat(query_labels, dim=1)
-            query_feat = torch.cat(query_feats, dim=2)
-            query_pos = torch.cat(query_poses, dim=1)
-            query_heatmap_score = torch.cat(query_heatmap_scores, dim=2)
-
-            self.num_proposals = self.num_proposals_ori * self.multistage_heatmap
-
-        if self.use_lidar:
-            if self.init_pq_with_heatmap:
-                query_labels = self.query_labels
-
-            # skip focal former DN generation
-            # Always do multiscale
-            if not self.multistage_heatmap:
-                lidar_feat = new_lidar_feat
-            else:
-                if self.extra_feat:
-                    lidar_feat = extra_feats
-                else:
-                    lidar_feat = multistage_feats[-1]
-
-            multiscale_inputs = [lidar_feat]
+            multiscale_inputs = [extra_feats]
             multiscale_inputs.append(self.dconv(multiscale_inputs[-1]))
             multiscale_inputs.append(
                 self.dconv2(multiscale_inputs[-1]))
             multiscale_inputs_flatten = torch.cat(
                 [i.flatten(2, 3) for i in multiscale_inputs], dim=-1)
             # moved the line below out of the decoder layer for loop in focal_decoder
-            bev_pos = torch.cat([bev_pos, bev_pos_2, bev_pos_4], dim=1)
 
-            ################## Deformable Parameters #############
+            ################## Deformable Parameters ##################
             # always do multiscale
             spatial_shapes = torch.as_tensor(
                 [i.shape[2:] for i in multiscale_inputs], 
@@ -498,7 +261,9 @@ class Sparse4DHead(BaseModule):
                 level_start_index=level_start_index,
                 valid_ratios=torch.ones((batch_size, 1, 2), device='cuda'),
             )
+            ################## Deformable Parameters ##################
 
+            ################## bev_pos_embed ##################
             if self.use_bevpos_emb:
                 bev_reference_points = bev_pos / \
                     torch.flip(spatial_shapes[:1], dims=(1,))[:, None]
@@ -507,10 +272,15 @@ class Sparse4DHead(BaseModule):
                 bev_pos_embed = self.pos_embed_learned(
                     bev_sine_pos)  # bs, nq, 256
                 # TODO( multiple addition for bev pos embedding )
+
                 pos_lidar_feat_flatten = lidar_feat_flatten + \
                     bev_pos_embed.transpose(1, 2)
             else:
                 pos_lidar_feat_flatten = lidar_feat_flatten
+            ################## bev_pos_embed ##################
+
+            multistage_feats = pts_inputs[1]
+            multistage_feats.insert(0, lidar_feat)
 
         # ========= get instance info ============
         if (
@@ -530,13 +300,27 @@ class Sparse4DHead(BaseModule):
             instance_feature,
             anchor,
             time_interval,
+            dense_heatmap_list,
+            multistage_acc_masks,
         ) = self.instance_bank.get(
             batch_size,
             timestamp,
             batched_global2lidar=batched_global2lidar,
-            dn_metas=self.sampler.dn_metas
+            # pass dn_metas to instance_bank.get to do forward timestep update
+            dn_metas=self.sampler.dn_metas,
+            multistage_feats=multistage_feats,
+            multiscale_lidar_feats=multiscale_inputs,
+            bev_pos=bev_pos_1
         )
         num_learned_grp = anchor.shape[1]
+        if self.instance_bank.heatmap_init:
+            output_dict = dict(
+                heatmap_bboxes=anchor,
+                dense_heatmap_list=dense_heatmap_list,
+                multistage_acc_masks=multistage_acc_masks
+            )
+        else:
+            output_dict = dict()
 
         # ========= prepare for denosing training ============
         # 1. get dn metas: noisy-anchors and corresponding GT
@@ -547,14 +331,19 @@ class Sparse4DHead(BaseModule):
         temp_dn_reg_target = None
         if self.training and hasattr(self.sampler, "get_dn_anchors"):
             dn_metas = self.sampler.get_dn_anchors(
-                [ds.gt_instances_3d.labels_3d for ds in batch_data_samples],
-                [ds.gt_instances_3d.bboxes_3d for ds in batch_data_samples],
-                [ds.gt_instances_3d.instance_inds for ds in batch_data_samples],
+                cls_target=[ds.gt_instances_3d.labels_3d for ds in batch_data_samples],
+                box_target=[ds.gt_instances_3d.bboxes_3d for ds in batch_data_samples],
+                multiscale_lidar_feats=multiscale_inputs,
+                num_bbox_pool_points=self.instance_bank.num_bbox_pool_points,
+                roi_mlp=self.instance_bank.roi_mlp,
+                cat_encoding=self.instance_bank.cat_encoding,
+                gt_instance_inds=[ds.gt_instances_3d.instance_inds for ds in batch_data_samples],
             )
         if dn_metas is not None:
             # TODO put this condition into a separate method
             (
-                dn_anchor,  # (bs, num_dn_groups, num_dn_anchor, embbed_dim)
+                dn_anchor,  # (bs, num_dn_groups, num_dn_anchor, 11)
+                dn_feat, # (bs, num_dn_groups, num_dn_anchor, embbed_dim)
                 dn_reg_target,
                 dn_cls_target,
                 dn_attn_mask,
@@ -577,32 +366,24 @@ class Sparse4DHead(BaseModule):
                 )
             assert num_dn_groups % num_learned_grp == 0  # only support equal division
             dn_grp_per_learned_grp = num_dn_groups // num_learned_grp
-            # concat along the query dim
-            if num_learned_grp == num_dn_groups:
-                # assign one dn group to each learned grp
-                # (bs, num_learned_grp, num_instance, embbed_dim)
-                anchor = torch.cat([anchor, dn_anchor], dim=2)
-            else:
-                # divide dn groups evenly among learned groups
-                raise NotImplementedError(
-                    "multiple dn groups per learned group is not supported yet")
-            # zero initialize the instance_features of dn instances
             dn_per_lrn_grp = dn_per_dn_grp * dn_grp_per_learned_grp
-            instance_feature = torch.cat(
-                [
-                    instance_feature,
-                    instance_feature.new_zeros(
-                        batch_size,
-                        num_learned_grp,
-                        dn_per_lrn_grp,
-                        instance_feature.shape[-1]
-                    ),
-                ],
-                dim=2,
-            )
+            # concat along the query dim
+            if num_learned_grp != num_dn_groups:
+                # divide dn groups evenly among learned groups
+                dn_anchor = dn_anchor.view(
+                    batch_size, num_learned_grp, dn_per_lrn_grp, -1
+                ) # (bs, num_learned_grp, num_instance, embbed_dim)
+                dn_feat = dn_feat.view(
+                    batch_size, num_learned_grp, dn_per_lrn_grp, -1
+                )
+            # (bs, num_learned_grp, num_instance, embbed_dim)
+            anchor = torch.cat([anchor, dn_anchor], dim=2)
+
+            instance_feature = torch.cat([instance_feature, dn_feat], dim=2,)
+
             # construct attn mask
             num_instance = instance_feature.shape[2]
-            num_free_instance = num_instance - dn_per_dn_grp
+            num_free_instance = num_instance - dn_per_lrn_grp
             attn_mask = anchor.new_ones(
                 (num_instance, num_instance), dtype=torch.bool
             )
@@ -680,7 +461,7 @@ class Sparse4DHead(BaseModule):
                     reference_points[:, :, None] * \
                     MSDA_kwargs["valid_ratios"][:, None]
 
-                output_flattened = self.layers[i](
+                deform_out_flattened = self.layers[i](
                     query=instance_feature_flattened,  # B x N x C
                     value=pos_lidar_feat_flatten.permute(
                         0, 2, 1),  # B C Pv -> B Pv C
@@ -691,12 +472,12 @@ class Sparse4DHead(BaseModule):
                     **MSDA_kwargs,)
 
                 # reshape back to batch x num_learned_grp x num_instance x embed_dim
-                output = output_flattened.view(
+                deformable_output = deform_out_flattened.view(
                     batch_size, num_learned_grp, -1, instance_feature.shape[-1])
 
                 # follow DeformableFeatureAggregation, concat the output
                 instance_feature = torch.cat(
-                    [instance_feature, output], dim=-1)
+                    [instance_feature, deformable_output], dim=-1)
 
             elif op == "refine":
                 anchor, cls, qt = self.layers[i](
@@ -747,8 +528,6 @@ class Sparse4DHead(BaseModule):
             else:
                 raise NotImplementedError(f"{op} is not supported.")
 
-        output = {}
-
         # split predictions of learnable instances and noisy instances
         if dn_metas is not None:
             # classification, prediction, quality are length of total decoder layers
@@ -762,7 +541,7 @@ class Sparse4DHead(BaseModule):
                 x[:, :, :num_free_instance] if x is not None else None
                 for x in quality
             ]
-            output.update(
+            output_dict.update(
                 {
                     "dn_prediction": dn_prediction,
                     "dn_classification": dn_classification,
@@ -772,7 +551,7 @@ class Sparse4DHead(BaseModule):
                 }
             )
             if temp_dn_reg_target is not None:
-                output.update(
+                output_dict.update(
                     {
                         "temp_dn_reg_target": temp_dn_reg_target,
                         "temp_dn_cls_target": temp_dn_cls_target,
@@ -786,6 +565,12 @@ class Sparse4DHead(BaseModule):
             # cache dn_metas for temporal denoising
             dn_instance_feature = instance_feature[:, :, num_free_instance:]
             dn_anchor = anchor[:, :, num_free_instance:]
+            # reshape back from (bs, num_learned_groups, num_dn_anchor * dn_grp_per_lrn_gro, embed_dim) 
+            # to (bs, num_dn_groups, num_dn_anchor, embbed_dim)
+            dn_instance_feature = dn_instance_feature.view(
+                batch_size, num_dn_groups, dn_per_dn_grp, -1)
+            dn_anchor = dn_anchor.view(
+                batch_size, num_dn_groups, dn_per_dn_grp, -1)
             self.sampler.cache_dn(
                 dn_instance_feature,
                 dn_anchor,
@@ -799,7 +584,7 @@ class Sparse4DHead(BaseModule):
             anchor = anchor[:, :, :num_free_instance]
             cls = cls[:, :, :num_free_instance]
 
-        output.update(
+        output_dict.update(
             {
                 "classification": classification,
                 "prediction": prediction,
@@ -812,9 +597,9 @@ class Sparse4DHead(BaseModule):
             instance_inds = self.instance_bank.get_instance_ind(
                 cls, self.decoder.score_threshold
             )
-            output["instance_inds"] = instance_inds
+            output_dict["instance_inds"] = instance_inds
         else:
-            output["instance_inds"] = None
+            output_dict["instance_inds"] = None
 
         # cache current instances for temporal modeling
         self.instance_bank.cache(
@@ -823,9 +608,9 @@ class Sparse4DHead(BaseModule):
             cls,
             timestamp,
             [x["lidar2global"] for x in batch_metas],
-            output["instance_inds"]
+            output_dict["instance_inds"]
         )
-        return output
+        return output_dict
 
     def loss(self, model_outs, batch_data_samples):
         gt_cls = [bs.gt_instances_3d.labels_3d for bs in batch_data_samples]
@@ -835,7 +620,7 @@ class Sparse4DHead(BaseModule):
         cls_scores = model_outs["classification"]
         reg_preds = model_outs["prediction"]
         quality = model_outs["quality"]
-        output = {}
+        output_dict = {}
         prev_instance_inds = self.instance_bank.instance_inds_training
         batch_size = len(gt_cls)
         if prev_instance_inds is None:
@@ -884,9 +669,11 @@ class Sparse4DHead(BaseModule):
             # mask determines which elements to consider for regression loss
             mask = mask.flatten()
             reg_weights *= self.reg_weights.to(reg_weights.device)
+
             reg_target = reg_target.flatten(end_dim=2)[mask]
             reg = reg.flatten(end_dim=2)[mask]
             reg_weights = reg_weights.flatten(end_dim=2)[mask]
+
             reg_target = torch.where(
                 reg_target.isnan(), reg.new_tensor(0.0), reg_target
             )
@@ -904,8 +691,8 @@ class Sparse4DHead(BaseModule):
                 cls_target=cls_target,
             )
 
-            output[f"loss_cls_{decoder_idx}"] = cls_loss
-            output.update(reg_loss)
+            output_dict[f"loss_cls_{decoder_idx}"] = cls_loss
+            output_dict.update(reg_loss)
 
             # compute metrics for query consistency
             qc_metrics = self.compute_qc_metrics(
@@ -917,7 +704,7 @@ class Sparse4DHead(BaseModule):
             for key, val in qc_metrics.items():
                 if not val.isnan():
                     # add decoder suffix to qc metrics
-                    output[f"qc_metrics/{key}_{decoder_idx}"] = val
+                    output_dict[f"qc_metrics/{key}_{decoder_idx}"] = val
 
         # cache the id_target of the final layer for the next timestep
         # assuming non-zero decoder layers
@@ -935,9 +722,18 @@ class Sparse4DHead(BaseModule):
         # compute losses on dn queries
         if "dn_prediction" in model_outs:
             dn_losses = self.compute_dn_losses(model_outs)
-            output.update(dn_losses)
+            output_dict.update(dn_losses)
 
-        return output
+        # compute losses on dense_heatmap_list
+        if model_outs.get('dense_heatmap_list', None):
+            heatmap_losses = self.compute_heatmap_losses(
+                model_outs['dense_heatmap_list'], 
+                model_outs['multistage_acc_masks'],
+                model_outs['heatmap_bboxes'],
+                batch_data_samples)
+            output_dict.update(heatmap_losses)
+
+        return output_dict
 
     def compute_dn_losses(self, model_outs):
         dn_cls_scores = model_outs["dn_classification"]
@@ -952,7 +748,7 @@ class Sparse4DHead(BaseModule):
             num_dn_pos,
         ) = self.prepare_for_dn_loss(model_outs)
 
-        output = {}
+        output_dict = {}
         for decoder_idx, (cls, reg) in enumerate(
             zip(dn_cls_scores, dn_reg_preds)
         ):
@@ -986,9 +782,9 @@ class Sparse4DHead(BaseModule):
                 weight=reg_weights,
                 suffix=f"_dn_{decoder_idx}",
             )
-            output[f"loss_cls_dn_{decoder_idx}"] = cls_loss
-            output.update(reg_loss)
-        return output
+            output_dict[f"loss_cls_dn_{decoder_idx}"] = cls_loss
+            output_dict.update(reg_loss)
+        return output_dict
 
     def compute_qc_metrics(self, gt_id, conf, id_target, prev_instance_inds=None):
         """
@@ -1122,6 +918,43 @@ class Sparse4DHead(BaseModule):
             reg_weights,
             num_dn_pos,
         )
+
+    def compute_heatmap_losses(self, dense_heatmap_list, multistage_acc_masks, heatmap_bboxes, batch_data_samples):
+        output_dict = dict()
+        dense_heatmap = torch.stack(dense_heatmap_list, dim=0) # (num heatmap stages, bs, num classes, H, W)
+        multistage_acc_masks = torch.stack(multistage_acc_masks, dim=0) # (num heatmap stages, bs, num classes, H, W)
+        # compute heatmap targets
+        # truncate heatmap_bboxes to len(self.reg_weights)
+        heatmap_bboxes = heatmap_bboxes[..., : len(self.reg_weights)]
+        gt_heatmap, gt_heatmap_bboxes, reg_weight = self.sampler.get_heatmap_target(
+            dense_heatmap[0],  # only used to get shape, only need to pass from 1 stage
+            heatmap_bboxes, 
+            batch_data_samples)
+        reg_weight *= self.reg_weights.to(reg_weight.device)
+        # mask out gt that should be ignored (why is this necessary? following ff3d, but could be incorrect)
+        # if we pass masks as weight, why do we need to mask out the gt target?
+        # repeat gt_heatmap to match number of stages
+        gt_heatmap = gt_heatmap.repeat(len(dense_heatmap_list), 1, 1, 1, 1) * multistage_acc_masks
+
+        # compute num_pos based on total gt bboxes
+        num_pos = max(1, sum([len(bs.gt_instances_3d.labels_3d) for bs in batch_data_samples]))
+        num_pos *= self.instance_bank.num_learned_groups
+        # compute heatmap loss
+        output_dict['loss_heatmap'] = self.loss_heatmap(
+            clip_sigmoid(dense_heatmap),
+            gt_heatmap,
+            weight=multistage_acc_masks,
+            avg_factor=num_pos
+        )
+
+        # compute heatmap bbox loss
+        output_dict['loss_heatmap_bbox'] = self.loss_heatmap_reg(
+            heatmap_bboxes,
+            gt_heatmap_bboxes,
+            weight=reg_weight,
+            avg_factor=num_pos
+        )
+        return output_dict
 
     def post_process(self, model_outs, output_idx=-1):
         # squeeze on the group dim

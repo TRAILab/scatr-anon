@@ -53,6 +53,9 @@ model = dict(
     ),
     pts_bbox_head=dict(
         point_cloud_range=point_cloud_range,
+        instance_bank=dict(
+            class_names=class_names,
+        ),
         refine_layer=dict(
             num_cls={{_base_.num_classes}}, # from dataset
         ),
@@ -139,7 +142,22 @@ custom_hooks = [
     dict(
         type="DisableTrackSampleHook",
         disable_after_epoch=int(num_epochs * disable_ts_ratio),
-    )
+    ),
+    # dict(
+    #     type="ProfilerHook", 
+    #     activity_with_cpu=True, 
+    #     activity_with_cuda=True,
+    #     with_stack=True,
+    #     by_epoch=False,
+    #     profile_times=6,
+    #     schedule=dict(
+    #         wait=1,
+    #         warmup=1,
+    #         active=1,
+    #         repeat=1,
+    #     ),
+    #     json_trace_path=f"{work_dir}/profiler_trace.json",
+    # ),
 ]
 
 vis_backends = [
