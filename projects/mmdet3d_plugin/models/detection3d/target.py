@@ -473,7 +473,7 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
             num_cls = cat_encoding.in_channels
             # add noise to cls target by setting random entries to a different class
             noised_cls_target = torch.cat([cls_target, cls_target], dim=2)
-            noise_mask = torch.rand_like(noised_cls_target) < self.dn_cls_noise_prob
+            noise_mask = torch.rand_like(noised_cls_target.float()) < self.dn_cls_noise_prob
             noise_cls = torch.randint_like(noised_cls_target, num_cls)
             noised_cls_target[noise_mask] = noise_cls[noise_mask]
             # clamp to avoid -1 from padding. Note, cls_target will still have -1 for padding
@@ -590,6 +590,7 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
         # split instance_feature and anchor into non-dn and dn
         # (bs, num learned grps, num queries, ...)
         num_dn = num_anchor - num_normal_anchor
+        num_dn_per_group = num_dn // self.num_dn_groups
         # dn queries
         # (bs, num learned grps, num_dn, ...)
         dn_feat = instance_feature[:, :, -num_dn:]
