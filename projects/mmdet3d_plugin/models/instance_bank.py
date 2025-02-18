@@ -117,9 +117,7 @@ class InstanceBank(nn.Module):
 
         # FocalFormer3D heatmap init params
         self.heatmap_init = heatmap_init
-        if heatmap_init and num_learned_groups > 1:
-            raise NotImplementedError(
-                "Only single group is supported for heatmap init")
+
         self.class_names = class_names
         self.num_classes = len(class_names)
         self.num_heatmap_stages = num_heatmap_stages
@@ -169,15 +167,19 @@ class InstanceBank(nn.Module):
             padding=1,
             bias='auto',
         ))
-        self.heatmap_head = nn.ModuleList([
+        heatmap_head_single = nn.ModuleList([
             copy.deepcopy(nn.Sequential(*layers))
             for _ in range(self.num_heatmap_stages)])
+        self.heatmap_head = nn.ModuleList([copy.deepcopy(heatmap_head_single) for _ in range(self.num_learned_groups)])
+        # TODO switch from conv1d to regular FFN
         self.cat_encoding = nn.Conv1d(self.num_classes, self.embed_dims, 1)
-        self.heatmap_bbox_head = nn.Sequential(
+        heatmap_bbox_head_single = nn.Sequential(
             *linear_relu_ln(self.embed_dims, 2, 2),
             Linear(self.embed_dims, 11),
             Scale([1.0] * 11),  # bbox_dim = 11
         )
+        self.heatmap_bbox_head = nn.ModuleList(
+            [copy.deepcopy(heatmap_bbox_head_single) for _ in range(self.num_learned_groups)])
 
         fc_list = []
         pre_channel = self.num_bbox_pool_points ** 2 * \
@@ -222,10 +224,30 @@ class InstanceBank(nn.Module):
                 self.anchor[None], (batch_size, 1, 1, 1))
         return instance_feature, anchor
 
-    def get_pq_heatmap(self, batch_size: int, multistage_feats, multiscale_lidar_feats, bev_pos):
+    def get_pq_heatmap_group(self, batch_size, multistage_feats, multiscale_lidar_feats, bev_pos):
+        instance_feats, anchors, dense_heatmap_list, multistage_acc_masks = [], [], [], []
+        for i in range(self.num_learned_groups):
+            # TODO vectorize group heatmap initialization
+            instance_feat, anchor, dense_heatmap, acc_masks = self.get_pq_heatmap(
+                batch_size, 
+                multistage_feats, 
+                multiscale_lidar_feats, 
+                bev_pos, 
+                self.heatmap_head[i], 
+                self.heatmap_bbox_head[i])
+            instance_feats.append(instance_feat)
+            anchors.append(anchor)
+            dense_heatmap_list.append(dense_heatmap)
+            multistage_acc_masks.append(acc_masks)
+        instance_feats = torch.stack(instance_feats, dim=1) # (bs, num_groups, num_proposals, embed_dims)
+        anchors = torch.stack(anchors, dim=1) # (bs, num_groups, num_proposals, 10)
+        dense_heatmap_list = torch.stack(dense_heatmap_list, dim=1) # (num_heatmap_stages, num_groups, bs, num_classes, feat_h, feat_w)
+        multistage_acc_masks = torch.stack(multistage_acc_masks, dim=1) # (num_heatmap_stages, num_groups, bs, num_classes, feat_h, feat_w)
+        return instance_feats, anchors, dense_heatmap_list, multistage_acc_masks
+
+    def get_pq_heatmap(self, batch_size: int, multistage_feats, multiscale_lidar_feats, bev_pos, heatmap_head, heatmap_bbox_head):
         # also check sizes of multistage_feats
         assert len(multistage_feats) == self.num_heatmap_stages  # sanity check
-        num_groups = self.num_learned_groups if self.training else 1
         assert self.num_anchor % self.num_heatmap_stages == 0, "num_anchor must be divisible by num_stages"
         num_proposals_per_stage = self.num_anchor // self.num_heatmap_stages
         feat_w, feat_h = self.xy_size
@@ -233,20 +255,20 @@ class InstanceBank(nn.Module):
         query_poses_list = []
         query_cat_encoding_list = []
         acc_masks = torch.ones(
-            (batch_size, self.num_classes * feat_h * feat_w), 
+            (batch_size, self.num_classes, feat_h, feat_w), 
             device=multistage_feats[0].device)
         multistage_acc_masks = []
         dense_heatmap_list = []
         # iterate through each heatmap
-        for head, feats in zip(self.heatmap_head, multistage_feats):
+        for head, feats in zip(heatmap_head, multistage_feats):
             # pass dense_heatmap through each heatmap in group
             dense_heatmap = head(feats)
             dense_heatmap_list.append(dense_heatmap)
-            multistage_acc_masks.append(acc_masks.view(*dense_heatmap.shape).clone())
+            multistage_acc_masks.append(acc_masks.clone())
 
             # remove early positive in heatmap using acc_masks
             heatmap = dense_heatmap.detach().sigmoid()
-            heatmap = heatmap * acc_masks.view(*heatmap.shape)
+            heatmap = heatmap * acc_masks
 
             local_max = torch.zeros_like(heatmap)
             # equals to nms radius = voxel_size * out_size_factor * kernel_size
@@ -344,7 +366,7 @@ class InstanceBank(nn.Module):
                 (1.0 - selected_mask_kernel).view(*acc_masks.shape)
 
         # query feat has num proposals at the end due to the use of conv layers instead of linear
-        # bs, embed_dims, num_proposals
+        # bs, num_proposals, query_feats_list
         query_feat = torch.cat(query_feats_list, dim=2).transpose(1, 2)
         query_pos = torch.cat(query_poses_list, dim=1)  # bs, num_proposals, 2
         query_cat_encoding = torch.cat(
@@ -358,7 +380,7 @@ class InstanceBank(nn.Module):
             self.point_cloud_range[[0, 1]].view(1, 2)
 
         # bs, num_proposals, embed_dims
-        anchors = self.heatmap_bbox_head(query_feat)  # bs, num_proposals, 10
+        anchors = heatmap_bbox_head(query_feat)  # bs, num_proposals, 10
         anchors[:, :, [X, Y]] += query_pos  # add xy offset
 
         # use predicted anchors to sample lidar feats for instance_feats
@@ -372,9 +394,8 @@ class InstanceBank(nn.Module):
         )
         instance_feats += query_cat_encoding  # add category encoding
 
-        # expand an extra dimension for groups, TODO support multiple groups
-        instance_feats = instance_feats.unsqueeze(1)
-        anchors = anchors.unsqueeze(1)
+        dense_heatmap_list = torch.stack(dense_heatmap_list, dim=0)  # (num_heatmap_stages, bs, num_classes, feat_h, feat_w)
+        multistage_acc_masks = torch.stack(multistage_acc_masks, dim=0) # (num_heatmap_stages, bs, num_classes * feat_h * feat_w)
 
         return instance_feats, anchors, dense_heatmap_list, multistage_acc_masks
 
@@ -446,7 +467,7 @@ class InstanceBank(nn.Module):
 
     def get(self, batch_size, timestamp, batched_global2lidar, dn_metas=None, multistage_feats=None, multiscale_lidar_feats=None, bev_pos=None):
         if self.heatmap_init:
-            instance_feature, anchor, dense_heatmap_list, acc_masks = self.get_pq_heatmap(
+            instance_feature, anchor, dense_heatmap_list, acc_masks = self.get_pq_heatmap_group(
                 batch_size, multistage_feats, multiscale_lidar_feats, bev_pos)
         else:
             instance_feature, anchor = self.get_pq_learned(batch_size)

@@ -725,7 +725,7 @@ class Sparse4DHead(BaseModule):
             output_dict.update(dn_losses)
 
         # compute losses on dense_heatmap_list
-        if model_outs.get('dense_heatmap_list', None):
+        if model_outs.get('dense_heatmap_list', None) is not None:
             heatmap_losses = self.compute_heatmap_losses(
                 model_outs['dense_heatmap_list'], 
                 model_outs['multistage_acc_masks'],
@@ -919,22 +919,23 @@ class Sparse4DHead(BaseModule):
             num_dn_pos,
         )
 
-    def compute_heatmap_losses(self, dense_heatmap_list, multistage_acc_masks, heatmap_bboxes, batch_data_samples):
+    def compute_heatmap_losses(self, dense_heatmap, multistage_acc_masks, heatmap_bboxes, batch_data_samples):
         output_dict = dict()
-        dense_heatmap = torch.stack(dense_heatmap_list, dim=0) # (num heatmap stages, bs, num classes, H, W)
-        multistage_acc_masks = torch.stack(multistage_acc_masks, dim=0) # (num heatmap stages, bs, num classes, H, W)
+        # dense_heatmap = torch.stack(dense_heatmap, dim=0) # (num heatmap stages, bs, num classes, H, W)
+        # multistage_acc_masks = torch.stack(multistage_acc_masks, dim=0) # (num heatmap stages, bs, num classes, H, W)
         # compute heatmap targets
         # truncate heatmap_bboxes to len(self.reg_weights)
         heatmap_bboxes = heatmap_bboxes[..., : len(self.reg_weights)]
         gt_heatmap, gt_heatmap_bboxes, reg_weight = self.sampler.get_heatmap_target(
-            dense_heatmap[0],  # only used to get shape, only need to pass from 1 stage
+            dense_heatmap[0, 0],  # only used to get shape, only need to pass from 1 stage, 1 group
             heatmap_bboxes, 
             batch_data_samples)
         reg_weight *= self.reg_weights.to(reg_weight.device)
         # mask out gt that should be ignored (why is this necessary? following ff3d, but could be incorrect)
         # if we pass masks as weight, why do we need to mask out the gt target?
         # repeat gt_heatmap to match number of stages
-        gt_heatmap = gt_heatmap.repeat(len(dense_heatmap_list), 1, 1, 1, 1) * multistage_acc_masks
+        gt_heatmap = gt_heatmap.repeat(
+            self.instance_bank.num_heatmap_stages, self.instance_bank.num_learned_groups, 1, 1, 1, 1) * multistage_acc_masks
 
         # compute num_pos based on total gt bboxes
         num_pos = max(1, sum([len(bs.gt_instances_3d.labels_3d) for bs in batch_data_samples]))
