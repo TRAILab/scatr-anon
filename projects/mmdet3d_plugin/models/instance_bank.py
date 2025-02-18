@@ -226,7 +226,8 @@ class InstanceBank(nn.Module):
 
     def get_pq_heatmap_group(self, batch_size, multistage_feats, multiscale_lidar_feats, bev_pos):
         instance_feats, anchors, dense_heatmap_list, multistage_acc_masks = [], [], [], []
-        for i in range(self.num_learned_groups):
+        num_learned_groups = self.num_learned_groups if self.training else 1
+        for i in range(num_learned_groups):
             # TODO vectorize group heatmap initialization
             instance_feat, anchor, dense_heatmap, acc_masks = self.get_pq_heatmap(
                 batch_size, 
