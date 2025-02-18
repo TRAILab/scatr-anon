@@ -12,11 +12,11 @@ log_level = "INFO"
 batch_size = 6
 num_gpus = 8
 total_batch_size = batch_size * num_gpus
-num_epochs = 12
+num_epochs = 17
 checkpoint_epoch_interval = 1
-val_epoch_interval = 1
+val_epoch_interval = 2
 
-short_name = "lidar-baseline"
+short_name = "lidar-simple-split_cbgs"
 work_dir = f"work_dirs/sparse4dv3-temporal_lidar_1x{num_gpus}_bs{batch_size}-{num_epochs}e_{short_name}"
 
 load_from = 'ckpts/focalformer3d_converted/DeformFormer3D_L_iterimg_ep20_mAP655_NDS707.pth'
@@ -171,7 +171,7 @@ default_hooks = dict(
     logger=dict(interval=500)
 )
 
-disable_ts_ratio = 0.75
+disable_ts_ratio = 0.6
 custom_hooks = [
     dict(
         type="DisableTrackSampleHook",
