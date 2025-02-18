@@ -97,13 +97,12 @@ class InstanceBank(nn.Module):
             )
             assert anchor.shape[1] == 11, "Anchor shape must be (num_anchor, 11)"
 
-        self.anchor = nn.Parameter(
-            torch.from_numpy(anchor).float(),
-            requires_grad=anchor_grad,
-        )
-        self.anchor_init = anchor
-
         if not heatmap_init:
+            self.anchor = nn.Parameter(
+                torch.from_numpy(anchor).float(),
+                requires_grad=anchor_grad,
+            )
+            self.anchor_init = anchor
             self.instance_feature = nn.Parameter(
                 torch.zeros(
                     [num_learned_groups, self.anchor.shape[0], self.embed_dims]),
@@ -139,7 +138,8 @@ class InstanceBank(nn.Module):
                 f"Dataset {self.dataset_name} not supported for heatmap init"
 
     def init_weight(self):
-        self.anchor.data = self.anchor.data.new_tensor(self.anchor_init)
+        if not self.heatmap_init:
+            self.anchor.data = self.anchor.data.new_tensor(self.anchor_init)
         if not self.heatmap_init and self.instance_feature.requires_grad:
             torch.nn.init.xavier_uniform_(self.instance_feature.data, gain=1)
 
