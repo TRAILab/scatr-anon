@@ -20,7 +20,8 @@ class TrackSampler3D(TrackImgSampler):
         drop_last: bool = False,
         seed: Optional[int] = None,
         shuffle: bool = True,
-        clip_len: int = 1,
+        clip_len: Optional[int] = None,
+        num_splits: Optional[int] = None,
         use_CBGS: bool = False,
         seq_flip_prob:float = 0.1,
     ) -> None:
@@ -57,14 +58,28 @@ class TrackSampler3D(TrackImgSampler):
         self.scene_indices = [self.dataset.get_scene_token_indices(
             scene_token) for scene_token in self.scene_tokens]
         self.group_indices = []
-        if clip_len == 1:  # split the scenes into individual frames
+
+        assert (clip_len is not None) or (num_splits is not None), (
+            "Either clip_len or num_splits must be specified.")
+        
+        assert (clip_len is None) or (num_splits is None), (
+            "Only one of clip_len or num_splits can be specified.")
+        
+        if num_splits is not None:
+            assert num_splits > 0, f"num_splits must be greater than 0, but got {num_splits}"
+            for scene_indices in self.scene_indices:
+                # split the sequence into num_splits parts
+                self.group_indices.extend(np.array_split(
+                    scene_indices, num_splits))
+            self.group_indices = [x.tolist() for x in self.group_indices]
+        elif clip_len == 1:  # split the scenes into individual frames
             for scene_indices in self.scene_indices:
                 self.group_indices.extend(np.array_split(
                     scene_indices, len(scene_indices)))
             self.group_indices = [x.tolist() for x in self.group_indices]
         elif clip_len == -1:  # don't split the scenes
             self.group_indices = self.scene_indices
-        else:  # split each scene into num_splits parts
+        else: # split the scenes into clips of length clip_len
             assert clip_len > 0, f"clip_len must be greater than -1, but got {clip_len}"
             # TODO support randomly skipping frames
             for scene_indices in self.scene_indices:
