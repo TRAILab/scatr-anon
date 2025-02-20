@@ -23,7 +23,6 @@ load_from = 'ckpts/focalformer3d_converted/DeformFormer3D_L_iterimg_ep20_mAP655_
 # resume_from = 'work_dirs/sparse4dv3-temporal_lidar_1x8_bs6-12e_lidar-group/epoch_4.pth'
 # resume=True
 
-tracking_test = True
 class_names = [
     "car",
     "truck",
@@ -58,6 +57,7 @@ model = dict(
             num_anchor=300,
             anchor="_nuscenes_kmeans900.npy",
             num_temp_instances=200,
+            dataset_name={{_base_.dataset_type}},
         ),
         refine_layer=dict(
             num_cls={{_base_.num_classes}}, # from dataset
@@ -221,6 +221,7 @@ env_cfg = dict(
 )
 
 # for debugging purposes, set deterministic=True
+# grid sampling backprop is not deterministic
 randomness = dict(seed=0, deterministic=False)
 
 # # only set for debugging
@@ -228,5 +229,5 @@ randomness = dict(seed=0, deterministic=False)
 #     model_wrapper_cfg=dict(
 #         type='MMDistributedDataParallel',
 #         find_unused_parameters=True,
-#         detect_anomalous_params=True),
+#         detect_anomalous_params=False),
 # )

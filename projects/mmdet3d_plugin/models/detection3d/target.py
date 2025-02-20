@@ -590,7 +590,7 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
         # split instance_feature and anchor into non-dn and dn
         # (bs, num learned grps, num queries, ...)
         num_dn = num_anchor - num_normal_anchor
-        num_dn_per_group = num_dn // self.num_dn_groups
+        num_dn_per_dn_grp = num_dn * num_learned_groups // self.num_dn_groups
         # dn queries
         # (bs, num learned grps, num_dn, ...)
         dn_feat = instance_feature[:, :, -num_dn:]
@@ -604,15 +604,13 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
             # this case is when there are multiple dn groups per learned group
             # reshape from (bs, num learned groups, num_dn_per_group * num dn groups per learned group) to
             # (bs, total num dn groups, num_dn_per_group, ...)
-            dn_feat = dn_feat.reshape(bs, self.num_dn_groups, num_dn_per_group, self.embed_dims)
+            dn_feat = dn_feat.reshape(bs, self.num_dn_groups, num_dn_per_dn_grp, self.embed_dims)
             dn_anchor = dn_anchor.reshape(
-                bs, self.num_dn_groups, num_dn_per_group, dn_anchor.shape[-1])
+                bs, self.num_dn_groups, num_dn_per_dn_grp, dn_anchor.shape[-1])
 
         # update temp_dn_metas by instance_inds
         temp_dn_feat = self.dn_metas["dn_instance_feature"]
         _, num_temp_dn_groups, num_temp_dn = temp_dn_feat.shape[:3]
-        # sanity check, they should be the same
-        assert num_temp_dn == num_dn_per_group, f"num_temp_dn: {num_temp_dn}, num_dn_per_group: {num_dn_per_group}"
         temp_dn_id = self.dn_metas["dn_id_target"]
 
         # match represents a matrix of matched ids from the temp dn and current dm
@@ -652,8 +650,24 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
             dn_id_target,
         ]
         output = []
+        if num_temp_dn > num_dn:
+            temp_mask = torch.randperm(num_temp_dn) < num_dn
+        else:
+            temp_mask = torch.ones(num_temp_dn, dtype=torch.bool)
         # pad the temp_dn_metas to the same length of dn_metas
         for i, (temp_meta, meta) in enumerate(zip(temp_dn_metas, dn_metas)):
+            # in the case num_temp_dn < num_dn, pad the temp_meta
+            # else, only take random subset of temp_meta
+            if num_temp_dn < num_dn:
+                pad = (0, num_dn - num_temp_dn)
+                if temp_meta.dim() == 4:
+                    pad = (0, 0) + pad
+                else:
+                    assert temp_meta.dim() == 3
+                temp_meta = F.pad(temp_meta, pad, value=0)
+            else:
+                temp_meta = temp_meta[:, :, temp_mask]
+
             mask = temporal_valid_mask[:, None, None]
             if meta.dim() == 4:
                 mask = mask.unsqueeze(dim=-1)
@@ -772,14 +786,15 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
         # compute assignment cost
         cost = self._box_cost_group(
             heatmap_bboxes, gt_bboxes_3d, gt_weights).detach().cpu().numpy()
-        assert cost.shape[0]==1, "multiple groups + heatmap init not yet supported"
-        # perform hungarian matching based on costs
-        pred_idx, target_idx = linear_sum_assignment(cost[0])
-        pred_idx = torch.from_numpy(pred_idx)
-        target_idx = torch.from_numpy(target_idx)
 
-        # insert gt based on assigned indices
-        heatmap_bbox_target[0, pred_idx] = gt_bboxes_3d[target_idx]
-        reg_weights[0, pred_idx] = gt_weights[target_idx]
+        # perform hungarian matching based on costs
+        for group_idx, cost_i in enumerate(cost):
+            pred_idx, target_idx = linear_sum_assignment(cost_i)
+            pred_idx = torch.from_numpy(pred_idx)
+            target_idx = torch.from_numpy(target_idx)
+
+            # insert gt based on assigned indices
+            heatmap_bbox_target[group_idx, pred_idx] = gt_bboxes_3d[target_idx]
+            reg_weights[group_idx, pred_idx] = gt_weights[target_idx]
 
         return heatmap_target, heatmap_bbox_target, reg_weights
