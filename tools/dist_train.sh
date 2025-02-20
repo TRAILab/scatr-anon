@@ -7,6 +7,9 @@ NODE_RANK=${NODE_RANK:-0}
 PORT=${PORT:-29500}
 MASTER_ADDR=${MASTER_ADDR:-"127.0.0.1"}
 
+export OMP_NUM_THREADS=36
+export MKL_NUM_THREADS=36
+
 PYTHONPATH="$(dirname $0)/..":$PYTHONPATH \
 torchrun \
     --nnodes=$NNODES \
