@@ -221,4 +221,12 @@ env_cfg = dict(
 )
 
 # for debugging purposes, set deterministic=True
-randomness = dict(seed=0, deterministic=True)
+randomness = dict(seed=0, deterministic=False)
+
+# # only set for debugging
+# cfg = dict(
+#     model_wrapper_cfg=dict(
+#         type='MMDistributedDataParallel',
+#         find_unused_parameters=True,
+#         detect_anomalous_params=True),
+# )

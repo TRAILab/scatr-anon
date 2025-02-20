@@ -425,7 +425,7 @@ class InstanceBank(nn.Module):
         ms_roi_feat = []
         for feat in multiscale_lidar_feats:
             # roi_feat (bs, embed_dim, num_proposals, roi_feats**2)
-            roi_feat = F.grid_sample(feat, grid_points)
+            roi_feat = F.grid_sample(feat, grid_points)  # TODO try align_corners=True
             # roi_feat = torch.zeros(batch_size, embed_dims, num_proposals, roi_feats**2).cuda()
             ms_roi_feat.append(roi_feat)
         # (bs, embed_dim * num multiscale_inputs, num_proposals, roi_feats**2)
