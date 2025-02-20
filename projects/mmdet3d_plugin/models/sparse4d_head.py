@@ -877,11 +877,9 @@ class Sparse4DHead(BaseModule):
                 tq_fp_conf=tq_conf[tq_fp_mask].nanmean(),
                 tq_fn_conf=tq_conf[tq_fn_mask].nanmean(),
                 # of the total pos tq predictions, how many were actual prev tracked obj
-                tq_precision=tq_tp / (tq_tp + tq_fp) if tq_tp + \
-                tq_fp > 0 else torch.tensor(0.0, device=device),
+                tq_precision=tq_tp / (tq_tp + tq_fp) if (tq_tp + tq_fp) > 0 else torch.tensor(0.0, device=device),
                 # of the total tracked obj that are also in current frame, how many maintained query consistency
-                tq_recall=tq_tp / (tq_tp + tq_fn) if tq_tp + \
-                tq_fn > 0 else torch.tensor(0.0, device=device),
+                tq_recall=tq_tp / (tq_tp + tq_fn) if (tq_tp + tq_fn) > 0 else torch.tensor(0.0, device=device),
             )
 
         return metric_dict
