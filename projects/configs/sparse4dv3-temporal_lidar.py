@@ -223,3 +223,11 @@ env_cfg = dict(
 # for debugging purposes, set deterministic=True
 # grid sampling backprop is not deterministic
 randomness = dict(seed=0, deterministic=False)
+
+# # only set for debugging
+# cfg = dict(
+#     model_wrapper_cfg=dict(
+#         type='MMDistributedDataParallel',
+#         find_unused_parameters=True,
+#         detect_anomalous_params=False),
+# )

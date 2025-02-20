@@ -938,8 +938,7 @@ class Sparse4DHead(BaseModule):
             self.instance_bank.num_heatmap_stages, self.instance_bank.num_learned_groups, 1, 1, 1, 1) * multistage_acc_masks
 
         # compute num_pos based on total gt bboxes
-        num_pos = max(1, sum([len(bs.gt_instances_3d.labels_3d) for bs in batch_data_samples]))
-        num_pos *= self.instance_bank.num_learned_groups
+        num_pos = max(1, gt_heatmap.eq(1).float().sum().item())
         # compute heatmap loss
         output_dict['loss_heatmap'] = self.loss_heatmap(
             clip_sigmoid(dense_heatmap),
