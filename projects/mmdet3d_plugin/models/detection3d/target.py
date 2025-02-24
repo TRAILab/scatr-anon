@@ -193,7 +193,7 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
                 # indices of the gt objects in curr frame that were also in the prev frame.
                 # if the prev inst ind is not in the track_id_2_gt_ind (i.e. not in the current frame), set to -1
                 gt_inds = torch.tensor([
-                    track_id_2_gt_ind.get(track_id.item(), -1) for track_id in valid_prev_inst_inds])
+                    track_id_2_gt_ind.get(track_id.item(), -1) for track_id in valid_prev_inst_inds], dtype=torch.long)
 
                 # Filter valid gt indices
                 # (num gt obj from prev iteration)
