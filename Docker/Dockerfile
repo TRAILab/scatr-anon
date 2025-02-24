@@ -8,7 +8,7 @@ FROM pytorch/pytorch:${PYTORCH}-cuda${CUDA}-cudnn${CUDNN}-devel
 ENV TORCH_CUDA_ARCH_LIST="6.0 6.1 7.0+PTX 8.0+PTX 8.6+PTX"
 ENV TORCH_USE_CUDA_DSA=1
 ENV TORCH_NVCC_FLAGS="-Xfatbin -compress-all"
-ENV CMAKE_PREFIX_PATH="$(dirname $(which conda))/../"
+# ENV CMAKE_PREFIX_PATH="$(dirname $(which conda))/../"
 ENV DEBIAN_FRONTEND=noninteractive
 # set CUBLAS_WORKSPACE_CONFIG=:4096:8 for reproducibility
 ENV CUBLAS_WORKSPACE_CONFIG=:4096:8
@@ -53,11 +53,12 @@ RUN cat /etc/ssh/ssh_config | grep -v StrictHostKeyChecking > /etc/ssh/ssh_confi
 
 
 # Python tools
-RUN pip install --upgrade pip
+# RUN pip install --upgrade pip
 
-RUN pip install \
-    openmim==0.3.9 \    
-    wandb==0.18.1
+RUN pip install wandb==0.18.1
+# RUN pip install \
+    # # openmim==0.3.9 \    
+    # wandb==0.18.1
 
 # Install OpenMMLab packages
 ENV FORCE_CUDA="1"
@@ -66,7 +67,8 @@ ENV FORCE_CUDA="1"
 RUN git clone https://github.com/TRAILab/nuscenes-devkit.git && cd nuscenes-devkit && \
     pip install ./setup
 
-RUN mim install "mmengine==0.10.5" "mmcv==2.1.0" "mmdet==3.2.0" "mmdet3d==1.4.0"
+# RUN mim install "mmengine==0.10.5" "mmcv==2.1.0" "mmdet==3.2.0" "mmdet3d==1.4.0"
+RUN pip install "mmengine==0.10.5" "mmcv==2.1.0" "mmdet==3.2.0" "mmdet3d==1.4.0"
 
 # install spconv
 RUN pip install spconv-cu124
