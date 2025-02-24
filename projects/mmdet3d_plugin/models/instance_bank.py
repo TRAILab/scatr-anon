@@ -131,11 +131,31 @@ class InstanceBank(nn.Module):
         self.nms_padding = nms_kernel_size // 2
         self.num_bbox_pool_points = num_bbox_pool_points
         self.dataset_name = dataset_name
+
+        # init roi_mlp
+        fc_list = []
+        pre_channel = self.num_bbox_pool_points ** 2 * \
+            self.embed_dims * (3)  # 3 levels of multiscale inputs
+        num_roi_layers = 3
+        for i in range(num_roi_layers):
+            chl = self.embed_dims * 4 if i < num_roi_layers - 1 else self.embed_dims
+            fc_list.extend([
+                nn.Linear(pre_channel, chl, bias=False),
+                nn.BatchNorm1d(chl),
+                nn.ReLU(inplace=True)
+            ])
+            fc_list.append(nn.Dropout(0.1))
+            pre_channel = chl
+        self.roi_mlp = nn.Sequential(*fc_list)
+
         if self.heatmap_init:
             assert self.num_heatmap_stages > 0
             self.create_heatmap_head()
             assert 'nuscenes' in self.dataset_name.lower() or 'waymo' in self.dataset_name.lower(), \
                 f"Dataset {self.dataset_name} not supported for heatmap init"
+        else:
+            self.cat_encoding = None
+            self.heatmap_head = None
 
     def init_weight(self):
         if not self.heatmap_init:
@@ -181,21 +201,6 @@ class InstanceBank(nn.Module):
         self.heatmap_bbox_head = nn.ModuleList(
             [copy.deepcopy(heatmap_bbox_head_single) for _ in range(self.num_learned_groups)])
 
-        fc_list = []
-        pre_channel = self.num_bbox_pool_points ** 2 * \
-            self.embed_dims * (3)  # 3 levels of multiscale inputs
-        num_roi_layers = 3
-        for i in range(num_roi_layers):
-            chl = self.embed_dims * 4 if i < num_roi_layers - 1 else self.embed_dims
-            fc_list.extend([
-                nn.Linear(pre_channel, chl, bias=False),
-                nn.BatchNorm1d(chl),
-                nn.ReLU(inplace=True)
-            ])
-            fc_list.append(nn.Dropout(0.1))
-            pre_channel = chl
-        self.roi_mlp = nn.Sequential(*fc_list)
-
     def reset(self):
         self.cached_feature = None
         self.cached_anchor = None
@@ -208,7 +213,7 @@ class InstanceBank(nn.Module):
         self.instance_inds_training = None
         self.prev_id = 0
 
-    def get_pq_learned(self, batch_size):
+    def get_pq_learned(self, batch_size, multiscale_lidar_feats):
         if self.training:
             instance_feature = torch.tile(
                 self.instance_feature[None], (batch_size, 1, 1, 1)
@@ -222,6 +227,16 @@ class InstanceBank(nn.Module):
             )
             anchor = torch.tile(
                 self.anchor[None], (batch_size, 1, 1, 1))
+        pooled_feats = InstanceBank.bbox_feat_pooling(
+            anchor.reshape(batch_size, -1, anchor.shape[-1]),
+            multiscale_lidar_feats,
+            self.roi_mlp,
+            self.point_cloud_range,
+            self.num_bbox_pool_points,
+            self.embed_dims,
+        ).reshape(batch_size, self.num_learned_groups, self.num_anchor, self.embed_dims)
+        instance_feature += pooled_feats
+
         return instance_feature, anchor
 
     def get_pq_heatmap_group(self, batch_size, multistage_feats, multiscale_lidar_feats, bev_pos):
@@ -471,7 +486,7 @@ class InstanceBank(nn.Module):
             instance_feature, anchor, dense_heatmap_list, acc_masks = self.get_pq_heatmap_group(
                 batch_size, multistage_feats, multiscale_lidar_feats, bev_pos)
         else:
-            instance_feature, anchor = self.get_pq_learned(batch_size)
+            instance_feature, anchor = self.get_pq_learned(batch_size, multiscale_lidar_feats)
             dense_heatmap_list, acc_masks = None, None
 
         if (

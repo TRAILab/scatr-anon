@@ -195,7 +195,7 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
                 # indices of the gt objects in curr frame that were also in the prev frame.
                 # if the prev inst ind is not in the track_id_2_gt_ind (i.e. not in the current frame), set to -1
                 gt_inds = torch.tensor([
-                    track_id_2_gt_ind.get(track_id.item(), -1) for track_id in valid_prev_inst_inds])
+                    track_id_2_gt_ind.get(track_id.item(), -1) for track_id in valid_prev_inst_inds], dtype=torch.long)
 
                 # Filter valid gt indices
                 # (num gt obj from prev iteration)
@@ -656,16 +656,16 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
             dn_id_target,
         ]
         output = []
-        if num_temp_dn > num_dn:
-            temp_mask = torch.randperm(num_temp_dn) < num_dn
+        if num_temp_dn > num_dn_per_dn_grp:
+            temp_mask = torch.randperm(num_temp_dn) < num_dn_per_dn_grp
         else:
             temp_mask = torch.ones(num_temp_dn, dtype=torch.bool)
         # pad the temp_dn_metas to the same length of dn_metas
         for i, (temp_meta, meta) in enumerate(zip(temp_dn_metas, dn_metas)):
             # in the case num_temp_dn < num_dn, pad the temp_meta
             # else, only take random subset of temp_meta
-            if num_temp_dn < num_dn:
-                pad = (0, num_dn - num_temp_dn)
+            if num_temp_dn < num_dn_per_dn_grp:
+                pad = (0, num_dn_per_dn_grp - num_temp_dn)
                 if temp_meta.dim() == 4:
                     pad = (0, 0) + pad
                 else:
