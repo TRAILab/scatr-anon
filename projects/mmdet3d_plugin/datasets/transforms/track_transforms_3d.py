@@ -252,6 +252,8 @@ class TrackSample(ObjectSample):
             return input_dict
         # print([x['box3d_lidar'] for x in sampled_track_list])
         sampled_dict = self.db_sampler.sample_all(input_dict, sampled_track_list)
+        if sampled_dict is None:
+            return input_dict
 
         gt_bboxes_3d = input_dict["gt_bboxes_3d"]
         gt_labels_3d = input_dict["gt_labels_3d"]
