@@ -833,8 +833,7 @@ class Sparse4DHead(BaseModule):
             pq_fp_conf=pq_conf[pos_pq_mask & prev_pq_mask].nanmean(),
             pq_neg_conf=pq_conf[~pos_pq_mask].nanmean(),
             # of the total pos pq predictions, how many were actual newborn obj
-            pq_precision=pq_tp / (pq_tp + pq_fp) if pq_tp + \
-            pq_fp > 0 else torch.tensor(0.0),
+            pq_precision=pq_tp / (pq_tp + pq_fp) if (pq_tp + pq_fp) > 0 else torch.tensor(0.0),
         )
 
         # redundant condition, but keeping for clarity
@@ -878,11 +877,9 @@ class Sparse4DHead(BaseModule):
                 tq_fp_conf=tq_conf[tq_fp_mask].nanmean(),
                 tq_fn_conf=tq_conf[tq_fn_mask].nanmean(),
                 # of the total pos tq predictions, how many were actual prev tracked obj
-                tq_precision=tq_tp / (tq_tp + tq_fp) if tq_tp + \
-                tq_fp > 0 else torch.tensor(0.0, device=device),
+                tq_precision=tq_tp / (tq_tp + tq_fp) if (tq_tp + tq_fp) > 0 else torch.tensor(0.0, device=device),
                 # of the total tracked obj that are also in current frame, how many maintained query consistency
-                tq_recall=tq_tp / (tq_tp + tq_fn) if tq_tp + \
-                tq_fn > 0 else torch.tensor(0.0, device=device),
+                tq_recall=tq_tp / (tq_tp + tq_fn) if (tq_tp + tq_fn) > 0 else torch.tensor(0.0, device=device),
             )
 
         return metric_dict
@@ -946,7 +943,11 @@ class Sparse4DHead(BaseModule):
             weight=multistage_acc_masks,
             avg_factor=num_pos
         )
-
+        mask = torch.logical_not(torch.all(gt_heatmap_bboxes == 0, dim=-1))
+        num_pos = max(
+            reduce_mean(torch.sum(mask).to(dtype=heatmap_bboxes.dtype)).item(),
+            1.0
+        )
         # compute heatmap bbox loss
         output_dict['loss_heatmap_bbox'] = self.loss_heatmap_reg(
             heatmap_bboxes,

@@ -38,6 +38,7 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
         supervise_qc: bool = False,
         point_cloud_range=[-54.0, -54.0, -5.0, 54.0, 54.0, 3.0],
         embed_dims: int = 256,
+        second_chance_tq: bool = False,
         # heatmap target params
         gaussian_overlap: float = 0.1,
         min_radius: int = 2,
@@ -61,8 +62,9 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
         self.embed_dims = embed_dims
         self.gaussian_overlap = gaussian_overlap
         self.min_radius = min_radius
+        self.second_chance_tq = second_chance_tq
 
-    def encode_reg_target(self, box_target: List[LiDARInstance3DBoxes], device=None):
+    def encode_reg_target(self, box_target: List[LiDARInstance3DBoxes], device=None) -> List[torch.Tensor]:
         outputs = []
         for box in box_target:
             output = self.encode_reg_target_single(box, device)
@@ -214,7 +216,11 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
                             valid_pred_inds] = id_gt_i[valid_gt_inds]
 
             # pq can include unassigned tq
-            pq_mask = torch.logical_not(tq_mask)  # (num groups, num_preds)
+            if self.second_chance_tq:
+                pq_mask = torch.logical_not(tq_mask)  # (num groups, num_preds)
+            else:
+                pq_mask = torch.zeros_like(tq_mask, dtype=torch.bool)
+                pq_mask[:, num_tq:] = True
             # pq preds
             cls_pred_act_pq = [cls_pred_act[mask_i]
                                for cls_pred_act, mask_i in zip(cls_pred_act_i, pq_mask)]
