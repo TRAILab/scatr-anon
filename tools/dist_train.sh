@@ -11,6 +11,12 @@ export OMP_NUM_THREADS=36
 export MKL_NUM_THREADS=36
 
 PYTHONPATH="$(dirname $0)/..":$PYTHONPATH \
+
+# build ops
+cd projects/mmdet3d_plugin/ops
+python3 setup.py develop
+cd ../../../
+
 torchrun \
     --nnodes=$NNODES \
     --node_rank=$NODE_RANK \

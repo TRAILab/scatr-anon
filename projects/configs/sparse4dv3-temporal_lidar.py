@@ -55,7 +55,7 @@ model = dict(
         instance_bank=dict(
             class_names=class_names,
             num_anchor=300,
-            anchor="_nuscenes_kmeans900.npy",
+            anchor="_nuscenes_kmeans300.npy",
             num_temp_instances=200,
             dataset_name={{_base_.dataset_type}},
         ),
