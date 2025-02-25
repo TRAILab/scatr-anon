@@ -12,7 +12,7 @@ drop_out = 0.1
 with_quality_estimation = True
 tracking_threshold = 0.2
 multistage_heatmap = 1  # 1 for LiDAR, 2 for fusion, False for no heatmap init
-init_pq_with_heatmap = True
+init_pq_with_heatmap = False
 
 voxel_size = [0.075, 0.075, 0.2]
 
