@@ -234,7 +234,7 @@ class InstanceBank(nn.Module):
             self.point_cloud_range,
             self.num_bbox_pool_points,
             self.embed_dims,
-        ).reshape(batch_size, self.num_learned_groups, self.num_anchor, self.embed_dims)
+        ).reshape(instance_feature.shape)
         instance_feature += pooled_feats
 
         return instance_feature, anchor

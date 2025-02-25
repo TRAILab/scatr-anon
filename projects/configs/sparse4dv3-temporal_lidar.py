@@ -102,6 +102,7 @@ lr = 1.0e-5*total_batch_size  # 6e-4 for 8 gpus, bs=6
 optim_wrapper = dict(
     type="OptimWrapper",
     # type="AmpOptimWrapper", # TODO does not work with Sparse4D upgrade yet
+    # loss_scale=1.0,
     optimizer=dict(type="AdamW", lr=lr, weight_decay=0.001),
     clip_grad=dict(max_norm=25, norm_type=2, error_if_nonfinite=True),
     paramwise_cfg=dict(
@@ -168,7 +169,7 @@ test_cfg = dict()
 default_hooks = dict(
     checkpoint=dict(by_epoch=True,
                     interval=checkpoint_epoch_interval),
-    logger=dict(interval=500)
+    logger=dict(interval=50)
 )
 
 disable_ts_ratio = 0.6
