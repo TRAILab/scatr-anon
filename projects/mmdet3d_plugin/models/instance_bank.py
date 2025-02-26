@@ -110,6 +110,9 @@ class InstanceBank(nn.Module):
             )
         else:
             self.instance_feature = None
+        assert num_learned_groups >= num_learned_temp_groups, (
+            f"num_learned_groups {num_learned_groups} must be greater than or equal to num_learned_temp_groups {num_learned_temp_groups}"
+        )
         self.num_learned_groups = num_learned_groups
         self.num_learned_temp_groups = num_learned_temp_groups
         self.reset()
@@ -557,6 +560,18 @@ class InstanceBank(nn.Module):
             # no cached instances or different number of groups (training to inference)
             # TODO handle the inference case more elegantly
             return instance_feature, anchor
+        
+        if self.num_learned_temp_groups <= 0:
+            # no learned temp groups, no updating with TQ
+            return instance_feature, anchor
+        
+        # keep first group as temporal always
+        temp_group_mask = torch.zeros(instance_feature.shape[1], dtype=torch.bool, device=self.mask.device)
+        temp_group_mask[0] = True
+        temp_group_mask[1:] = torch.randperm(
+            instance_feature.shape[1] - 1) < self.num_learned_temp_groups - 1
+        # mask for updating with TQ
+        mask = self.mask[:, None] & temp_group_mask[None, :]
 
         num_dn = instance_feature.shape[2] - self.num_anchor
         if num_dn > 0:
@@ -577,24 +592,24 @@ class InstanceBank(nn.Module):
         # concatenate with cached queries (TQ)
         selected_feature = torch.cat(
             [self.cached_feature, selected_feature], dim=2
-        )
+        )  # (bs, num_groups, num_anchor, embed_dims)
         selected_anchor = torch.cat(
             [self.cached_anchor, selected_anchor], dim=2
-        )
+        )  # (bs, num_groups, num_anchor, anchor_size)
         # mask determines which items in the batch should be updated with selected_feature.
         # otherwise, if mask is False, the item should be updated with the original feature.
         instance_feature = torch.where(
-            self.mask[:, None, None, None], selected_feature, instance_feature
+            mask[:, :, None, None], selected_feature, instance_feature
         )
         anchor = torch.where(
-            self.mask[:, None, None, None], selected_anchor, anchor)
+            mask[:, :, None, None], selected_anchor, anchor)
 
         # update instance_inds with new instances
         if self.instance_inds_inference is not None:
             # wipe the stored memory based on self.mask (determined by difference in timestamp)
             self.instance_inds_inference = torch.where(
-                self.mask[:, None, None],
-                self.instance_inds_inference,
+                mask[:, :, None],
+                self.instance_inds_inference, # (bs, num_groups, num_anchor)
                 self.instance_inds_inference.new_tensor(UNTRACKED_ID),
             )
 

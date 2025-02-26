@@ -567,9 +567,9 @@ class Sparse4DHead(BaseModule):
             dn_anchor = anchor[:, :, num_free_instance:]
             # reshape back from (bs, num_learned_groups, num_dn_anchor * dn_grp_per_lrn_gro, embed_dim) 
             # to (bs, num_dn_groups, num_dn_anchor, embbed_dim)
-            dn_instance_feature = dn_instance_feature.view(
+            dn_instance_feature = dn_instance_feature.reshape(
                 batch_size, num_dn_groups, dn_per_dn_grp, -1)
-            dn_anchor = dn_anchor.view(
+            dn_anchor = dn_anchor.reshape(
                 batch_size, num_dn_groups, dn_per_dn_grp, -1)
             self.sampler.cache_dn(
                 dn_instance_feature,

@@ -1,8 +1,9 @@
 use_deformable_func = True
 embed_dims = 256
 num_heads = 8
-num_learned_groups = 5
-num_dn_groups = 5
+num_learned_groups = 2
+num_learned_temp_groups = 1
+num_dn_groups = 6
 num_temp_dn_groups = 3
 num_decoder = 6
 num_single_frame_decoder = 1
@@ -81,13 +82,13 @@ model = dict(
         # other sparse4D params
         instance_bank=dict(
             type="InstanceBank",
-            num_anchor=900,
+            num_anchor=300,
             num_learned_groups=num_learned_groups,
-            num_learned_temp_groups=num_temp_dn_groups,
+            num_learned_temp_groups=num_learned_temp_groups,
             embed_dims=embed_dims,
-            anchor="_nuscenes_kmeans900.npy",
+            anchor="_nuscenes_kmeans300.npy",
             anchor_handler=dict(type="SparseBox3DKeyPointsGenerator"),
-            num_temp_instances=600 if temporal else -1,
+            num_temp_instances=200 if temporal else -1,
             confidence_decay=0.6,
             feat_grad=True,  # true for multiple learned groups
             # heatmap init params
