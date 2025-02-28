@@ -541,6 +541,9 @@ class InstanceBank(nn.Module):
                 time_interval,
                 time_interval.new_tensor(self.default_time_interval),
             )
+
+            # duplicate self.mask across the group dim
+            self.mask = self.mask[:, None].repeat(1, instance_feature.shape[1])
         else:
             self.reset()
             time_interval = instance_feature.new_tensor(
@@ -564,14 +567,14 @@ class InstanceBank(nn.Module):
         if self.num_learned_temp_groups <= 0:
             # no learned temp groups, no updating with TQ
             return instance_feature, anchor
-        
+
         # keep first group as temporal always
         temp_group_mask = torch.zeros(instance_feature.shape[1], dtype=torch.bool, device=self.mask.device)
         temp_group_mask[0] = True
         temp_group_mask[1:] = torch.randperm(
-            instance_feature.shape[1] - 1) < self.num_learned_temp_groups - 1
-        # mask for updating with TQ
-        mask = self.mask[:, None] & temp_group_mask[None, :]
+            instance_feature.shape[1] - 1) < (self.num_learned_temp_groups - 1)
+        # mask for updating with TQ]
+        self.mask = self.mask & temp_group_mask[None, :]
 
         num_dn = instance_feature.shape[2] - self.num_anchor
         if num_dn > 0:
@@ -599,16 +602,16 @@ class InstanceBank(nn.Module):
         # mask determines which items in the batch should be updated with selected_feature.
         # otherwise, if mask is False, the item should be updated with the original feature.
         instance_feature = torch.where(
-            mask[:, :, None, None], selected_feature, instance_feature
+            self.mask[:, :, None, None], selected_feature, instance_feature
         )
         anchor = torch.where(
-            mask[:, :, None, None], selected_anchor, anchor)
+            self.mask[:, :, None, None], selected_anchor, anchor)
 
         # update instance_inds with new instances
         if self.instance_inds_inference is not None:
             # wipe the stored memory based on self.mask (determined by difference in timestamp)
             self.instance_inds_inference = torch.where(
-                mask[:, :, None],
+                self.mask[:, :, None],
                 self.instance_inds_inference, # (bs, num_groups, num_anchor)
                 self.instance_inds_inference.new_tensor(UNTRACKED_ID),
             )
