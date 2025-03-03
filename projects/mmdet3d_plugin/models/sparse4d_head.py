@@ -875,8 +875,8 @@ class Sparse4DHead(BaseModule):
                 torch.stack([
                     torch.zeros_like(tq_id_target[0, 0], dtype=torch.bool) # (num_group, num_tq)
                     if len(prev_inds) == 0 else
-                    torch.isin(prev_inds, gt_id) # object was in prev frame and is in current frame
-                    for (prev_inds, gt_id) in zip(prev_instance_inds_i, gt_id_i) 
+                    torch.isin(prev_inds, gt_id_i) # object was in prev frame and is in current frame
+                    for prev_inds in prev_instance_inds_i
                 ]) # iterate over groups
                 for (prev_instance_inds_i, gt_id_i)
                 in zip(prev_instance_inds_list, gt_id) # iterate over samples in batch
