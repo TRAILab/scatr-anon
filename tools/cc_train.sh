@@ -4,7 +4,7 @@
 #SBATCH --account=rrg-swasland
 #SBATCH --ntasks=1                    # number of MPI processes
 #SBATCH --mem=256G                     # Job CPU memory request
-#SBATCH --time=3:00:00               # Time limit hrs:min:sec
+#SBATCH --time=60:00:00               # Time limit hrs:min:sec
 #SBATCH --output=/home/cheongb2/job_artifacts/Sparse4D-L/slurm_logs/%x-%j.log   # Standard output and error log
 #SBATCH --cpus-per-task=32
 #SBATCH --gres=gpu:a100:4           # gpu:t4:4 (graham) or gpu:a100:1 (narval)
@@ -41,11 +41,10 @@ VOLUMES="--bind=$PROJ_DIR:$CONTAINER_PATH \
          --bind=$CKPT_DIR:$CONTAINER_PATH/ckpts
         "
 CFG_FILE=projects/configs/sparse4dv3-temporal_lidar.py
-WRK_DIR=work_dirs/train_${SLURM_JOB_NAME}/
 
 # Command
 WANDB_MODE='offline'
-BASE_CMD="bash ./tools/dist_train.sh $CFG_FILE $NUM_GPUS --work-dir $WRK_DIR"
+BASE_CMD="bash ./tools/dist_train.sh $CFG_FILE $NUM_GPUS"
 CONTAINER_CMD="apptainer exec --nv -c -e --writable-tmpfs --pwd $CONTAINER_PATH \
 --env "WANDB_API_KEY=$WANDB_API_KEY"
 --env "WANDB_MODE=$WANDB_MODE"
@@ -79,7 +78,7 @@ if [ "$DATASET" = "nuscenes_mini" ]; then
     )
 fi
 if [ "$DATASET" = "nuscenes" ]; then
-    nuscenes_zips=("sweeps.zip" "samples.zip" "v1.0-trainval.zip" "lidarseg.zip")
+    nuscenes_zips=("sweeps.zip" "samples.zip" "v1.0-trainval.zip" "lidarseg.zip" "maps.zip")
     nuscenes_pkls=(
         "nuscenes_sparse4d_mmlabv2_11-06_infos_train.pkl" \
         "nuscenes_sparse4d_mmlabv2_11-06_infos_val.pkl" \
