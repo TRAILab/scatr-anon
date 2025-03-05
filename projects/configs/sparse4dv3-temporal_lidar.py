@@ -58,11 +58,14 @@ model = dict(
             anchor="_nuscenes_kmeans300.npy",
             num_temp_instances=200,
             dataset_name={{_base_.dataset_type}},
+            feat_pool=True,
         ),
         refine_layer=dict(
             num_cls={{_base_.num_classes}}, # from dataset
         ),
         sampler=dict(
+            feat_pool=True,
+            second_chance_tq=True,
             supervise_qc=True,
             cls_wise_reg_weights={
                 class_names.index("traffic_cone"): [

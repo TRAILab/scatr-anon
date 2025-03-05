@@ -38,7 +38,8 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
         supervise_qc: bool = False,
         point_cloud_range=[-54.0, -54.0, -5.0, 54.0, 54.0, 3.0],
         embed_dims: int = 256,
-        second_chance_tq: bool = False,
+        second_chance_tq: bool = True,
+        feat_pool: bool = True,
         # heatmap target params
         gaussian_overlap: float = 0.1,
         min_radius: int = 2,
@@ -63,6 +64,7 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
         self.gaussian_overlap = gaussian_overlap
         self.min_radius = min_radius
         self.second_chance_tq = second_chance_tq
+        self.feat_pool = feat_pool
 
     def encode_reg_target(self, box_target: List[LiDARInstance3DBoxes], device=None) -> List[torch.Tensor]:
         outputs = []
@@ -460,7 +462,7 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
             num_gt *= 2
 
         # compute dn feat
-        if multiscale_lidar_feats:
+        if multiscale_lidar_feats and self.feat_pool:
             # initialize with lidar feat
             # flatten along group dim for bbox feat pooling
             dn_feat = InstanceBank.bbox_feat_pooling(

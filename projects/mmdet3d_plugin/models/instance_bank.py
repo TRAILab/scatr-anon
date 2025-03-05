@@ -63,6 +63,7 @@ class InstanceBank(nn.Module):
         xy_size: tuple = (180, 180),
         point_cloud_range: List[float] = [-54.0, -54.0, -5.0, 54.0, 54.0, 3.0],
         nms_kernel_size: int = 3,
+        feat_pool: bool = True,
         num_bbox_pool_points: int = 7,
         dataset_name:str='NuScenesTrackingDataset',
     ):
@@ -130,23 +131,27 @@ class InstanceBank(nn.Module):
         self.nms_kernel_size = nms_kernel_size
         self.nms_padding = nms_kernel_size // 2
         self.num_bbox_pool_points = num_bbox_pool_points
+        self.feat_pool = feat_pool
         self.dataset_name = dataset_name
 
         # init roi_mlp
-        fc_list = []
-        pre_channel = self.num_bbox_pool_points ** 2 * \
-            self.embed_dims * (3)  # 3 levels of multiscale inputs
-        num_roi_layers = 3
-        for i in range(num_roi_layers):
-            chl = self.embed_dims * 4 if i < num_roi_layers - 1 else self.embed_dims
-            fc_list.extend([
-                nn.Linear(pre_channel, chl, bias=False),
-                nn.BatchNorm1d(chl),
-                nn.ReLU(inplace=True)
-            ])
-            fc_list.append(nn.Dropout(0.1))
-            pre_channel = chl
-        self.roi_mlp = nn.Sequential(*fc_list)
+        if self.feat_pool:
+            fc_list = []
+            pre_channel = self.num_bbox_pool_points ** 2 * \
+                self.embed_dims * (3)  # 3 levels of multiscale inputs
+            num_roi_layers = 3
+            for i in range(num_roi_layers):
+                chl = self.embed_dims * 4 if i < num_roi_layers - 1 else self.embed_dims
+                fc_list.extend([
+                    nn.Linear(pre_channel, chl, bias=False),
+                    nn.BatchNorm1d(chl),
+                    nn.ReLU(inplace=True)
+                ])
+                fc_list.append(nn.Dropout(0.1))
+                pre_channel = chl
+            self.roi_mlp = nn.Sequential(*fc_list)
+        else:
+            self.roi_mlp = None
 
         if self.heatmap_init:
             assert self.num_heatmap_stages > 0
@@ -227,15 +232,16 @@ class InstanceBank(nn.Module):
             )
             anchor = torch.tile(
                 self.anchor[None], (batch_size, 1, 1, 1))
-        pooled_feats = InstanceBank.bbox_feat_pooling(
-            anchor.reshape(batch_size, -1, anchor.shape[-1]),
-            multiscale_lidar_feats,
-            self.roi_mlp,
-            self.point_cloud_range,
-            self.num_bbox_pool_points,
-            self.embed_dims,
-        ).reshape(instance_feature.shape)
-        instance_feature += pooled_feats
+        if self.feat_pool:
+            pooled_feats = InstanceBank.bbox_feat_pooling(
+                anchor.reshape(batch_size, -1, anchor.shape[-1]),
+                multiscale_lidar_feats,
+                self.roi_mlp,
+                self.point_cloud_range,
+                self.num_bbox_pool_points,
+                self.embed_dims,
+            ).reshape(instance_feature.shape)
+            instance_feature += pooled_feats
 
         return instance_feature, anchor
 
