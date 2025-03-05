@@ -1,7 +1,7 @@
 use_deformable_func = True
 embed_dims = 256
 num_heads = 8
-num_learned_groups = 2
+num_learned_groups = 1
 num_learned_temp_groups = 1
 num_dn_groups = 6
 num_temp_dn_groups = 3
@@ -97,6 +97,7 @@ model = dict(
             xy_size=(180, 180),
             nms_kernel_size=3,
             num_bbox_pool_points=7,
+            feat_pool=True,
         ),
         anchor_encoder=dict(
             type="SparseBox3DEncoder",
@@ -180,6 +181,8 @@ model = dict(
             cls_weight=2.0,
             box_weight=0.25,
             reg_weights=[2.0] * 3 + [0.5] * 3 + [0.0] * 4,
+            feat_pool=True,
+            second_chance_tq=True
         ),
         loss_cls=dict(
             type="mmdet.FocalLoss",
