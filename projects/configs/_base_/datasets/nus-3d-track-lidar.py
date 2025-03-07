@@ -122,8 +122,8 @@ test_pipeline = [
     dict(
         type="Pack3DTrackInputs",
         keys=["points",],
-        meta_keys=["lidar2global", "timestamp",
-                   "sample_idx", "scene_token", "lidar_path"],
+        meta_keys=["lidar2global", "timestamp", "lidar2img",
+                   "sample_idx", "scene_token", "lidar_path", "img_path", "num_pts_feats"],
     ),
 ]
 
@@ -139,9 +139,20 @@ data_aug_conf = dict(
     use_track_sample_3d=True,
 )
 
+
+
+
+data_aug_conf_eval = dict(
+    use_track_sample_3d=False,
+    W=1600,
+    H=900,
+    final_dim= (704, 256),
+    bot_pct_lim= (0.0, 0.0)
+)
+
 input_modality = dict(
     use_lidar=True,
-    use_camera=False,
+    use_camera=True,
     use_radar=False,
     use_map=False,
     use_external=False,
@@ -203,6 +214,7 @@ val_dataloader = dict(
         **data_basic_config,
         ann_file=val_pkl_path,
         pipeline=test_pipeline,
+        data_aug_conf=data_aug_conf_eval,
         test_mode=True,
     )
 )
