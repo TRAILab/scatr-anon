@@ -1,8 +1,8 @@
 use_deformable_func = True
 embed_dims = 256
 num_heads = 8
-num_learned_groups = 1
-num_learned_temp_groups = 1
+num_learned_groups = 2
+num_learned_temp_groups = 2
 num_dn_groups = 6
 num_temp_dn_groups = 3
 num_decoder = 6
@@ -85,6 +85,7 @@ model = dict(
             num_anchor=300,
             num_learned_groups=num_learned_groups,
             num_learned_temp_groups=num_learned_temp_groups,
+            group_selection=['topk', 'random'],
             embed_dims=embed_dims,
             anchor="_nuscenes_kmeans300.npy",
             anchor_handler=dict(type="SparseBox3DKeyPointsGenerator"),

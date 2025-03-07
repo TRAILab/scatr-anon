@@ -1,5 +1,5 @@
 import copy
-from typing import List
+from typing import List, Optional, Union
 
 import numpy as np
 import torch
@@ -29,7 +29,6 @@ def topk(confidence, k, *inputs):
 
     group_indices = torch.arange(
         num_groups, device=indices.device).view(1, -1, 1).expand(bs, -1, k)
-    # check how selected_elements is generated
 
     outputs = []
     for input_i in inputs:
@@ -38,6 +37,20 @@ def topk(confidence, k, *inputs):
         outputs.append(selected_elements)
     return confidence, outputs, indices  # Return indices as well
 
+def topk_single(confidence, k, *inputs):
+    """Ungrouped variation of the topk function"""
+    bs, N = confidence.shape
+    confidence, indices = torch.topk(confidence, k, dim=1)
+    # create batch index tensor, (bs, k) to match shape of indices
+    batch_indices = torch.arange(
+        bs, device=indices.device).view(-1, 1).expand(-1, k)
+
+    outputs = []
+    for input_i in inputs:
+        # (bs, k, ...)
+        selected_elements = input_i[batch_indices, indices]
+        outputs.append(selected_elements)
+    return confidence, outputs, indices  # Return indices as well
 
 @MODELS.register_module()
 class InstanceBank(nn.Module):
@@ -57,6 +70,7 @@ class InstanceBank(nn.Module):
         # TRAILAB params
         num_learned_groups: int = 1,
         num_learned_temp_groups: int = 1,
+        group_selection: Optional[List[Union[str, float]]] = None,
         # FocalFormer3D heatmap init params
         heatmap_init: bool = False,
         num_heatmap_stages: int = 1,
@@ -116,6 +130,19 @@ class InstanceBank(nn.Module):
         )
         self.num_learned_groups = num_learned_groups
         self.num_learned_temp_groups = num_learned_temp_groups
+        if group_selection is None:
+            group_selection = ["topk"] + ["random"] * (self.num_learned_groups - 1)
+
+        assert len(group_selection) == self.num_learned_groups, (
+            f"Group selection {group_selection} must have length {self.num_learned_groups}"
+        )
+        # TODO add more group selection options
+        supported_group_selection = ['random', 'topk']
+        assert all(
+            [x in supported_group_selection or (isinstance(x, float) and 0 <= x <= 1) for x in group_selection]
+        ), f"All entries in group_selection must be in {supported_group_selection} or a float between 0 and 1"
+        assert group_selection[0] == 'topk', "First group selection must be 'topk'."
+        self.group_selection = group_selection
         self.reset()
 
         # FocalFormer3D heatmap init params
@@ -656,11 +683,41 @@ class InstanceBank(nn.Module):
             )
 
         # self.cached_confidence used to perform confidence decay in the next step
-        (
-            self.cached_confidence,
-            (self.cached_feature, self.cached_anchor),
-            self.cached_indices,
-        ) = topk(confidence, self.num_temp_instances, instance_feature, anchor)
+        cached_confidence, cached_feature, cached_anchor, cached_indices = [], [], [], []
+        for selection_method, conf_i, inst_feat_i, anchor_i in zip(
+            self.group_selection, confidence.unbind(1), instance_feature.unbind(1), anchor.unbind(1)
+        ):
+            if selection_method == "topk":
+                # Select the topk instances based on confidence
+                conf_i_selected, (inst_feat_i_selected, anchor_i_selected), indices_selected = topk_single(
+                    conf_i, self.num_temp_instances, inst_feat_i, anchor_i
+                )
+            elif selection_method == "random":
+                # Randomly select num_temp_instances instances to be passed
+                indices_selected = torch.randperm(
+                    conf_i.shape[-1], device=conf_i.device)[: self.num_temp_instances]
+                conf_i_selected = conf_i[:, indices_selected]
+                inst_feat_i_selected = inst_feat_i[:, indices_selected]
+                anchor_i_selected = anchor_i[:, indices_selected]
+                indices_selected = indices_selected.unsqueeze(0).expand(
+                    conf_i.shape[0], -1) # (bs, num_temp_instances)
+            elif isinstance(selection_method, float):
+                raise NotImplementedError(
+                    "Random selection method not implemented. Need to know which instances are assigned"
+                )
+            else:
+                raise NotImplementedError(
+                    f"Group selection method {selection_method} not implemented"
+                )
+            cached_confidence.append(conf_i_selected)
+            cached_feature.append(inst_feat_i_selected)
+            cached_anchor.append(anchor_i_selected)
+            cached_indices.append(indices_selected)
+        self.cached_confidence = torch.stack(cached_confidence, dim=1)
+        self.cached_feature = torch.stack(cached_feature, dim=1)
+        self.cached_anchor = torch.stack(cached_anchor, dim=1)
+        self.cached_indices = torch.stack(cached_indices, dim=1)
+
         if self.num_temp_instances > 0 and instance_inds is not None:
             # update and cache instance_inds for the next frame
             # only used at inference time
