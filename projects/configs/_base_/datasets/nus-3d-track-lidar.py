@@ -127,7 +127,6 @@ test_pipeline = [
     ),
 ]
 
-
 # aug params from FocalFormer3D
 data_aug_conf = dict(
     # lidar aug params
@@ -137,13 +136,13 @@ data_aug_conf = dict(
     flip_ratio_bev_horizontal=0.5,
     flip_ratio_bev_vertical=0.5,
     use_track_sample_3d=True,
+    W=1600,
+    H=900,
+    final_dim= (704, 256),
+    bot_pct_lim= (0.0, 0.0)
 )
 
-
-
-
 data_aug_conf_eval = dict(
-    use_track_sample_3d=False,
     W=1600,
     H=900,
     final_dim= (704, 256),
@@ -152,7 +151,7 @@ data_aug_conf_eval = dict(
 
 input_modality = dict(
     use_lidar=True,
-    use_camera=True,
+    use_camera=False,
     use_radar=False,
     use_map=False,
     use_external=False,
