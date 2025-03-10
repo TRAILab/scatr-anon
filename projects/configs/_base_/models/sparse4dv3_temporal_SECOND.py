@@ -15,6 +15,9 @@ tracking_threshold = 0.2
 multistage_heatmap = 1  # 1 for LiDAR, 2 for fusion, False for no heatmap init
 init_pq_with_heatmap = False
 
+feat_pool = True
+dup_pq_groups = True
+
 voxel_size = [0.075, 0.075, 0.2]
 
 model = dict(
@@ -98,7 +101,8 @@ model = dict(
             xy_size=(180, 180),
             nms_kernel_size=3,
             num_bbox_pool_points=7,
-            feat_pool=True,
+            feat_pool=feat_pool,
+            dup_pq_groups=dup_pq_groups,
         ),
         anchor_encoder=dict(
             type="SparseBox3DEncoder",
@@ -182,7 +186,7 @@ model = dict(
             cls_weight=2.0,
             box_weight=0.25,
             reg_weights=[2.0] * 3 + [0.5] * 3 + [0.0] * 4,
-            feat_pool=True,
+            feat_pool=feat_pool,
             second_chance_tq=True
         ),
         loss_cls=dict(

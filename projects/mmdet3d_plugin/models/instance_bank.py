@@ -78,6 +78,7 @@ class InstanceBank(nn.Module):
         point_cloud_range: List[float] = [-54.0, -54.0, -5.0, 54.0, 54.0, 3.0],
         nms_kernel_size: int = 3,
         feat_pool: bool = True,
+        dup_pq_groups: bool = True,
         num_bbox_pool_points: int = 7,
         dataset_name:str='NuScenesTrackingDataset',
     ):
@@ -118,11 +119,19 @@ class InstanceBank(nn.Module):
                 requires_grad=anchor_grad,
             )
             self.anchor_init = anchor
-            self.instance_feature = nn.Parameter(
-                torch.zeros(
-                    [num_learned_groups, self.anchor.shape[0], self.embed_dims]),
-                requires_grad=feat_grad,
-            )
+            self.dup_pq_groups = dup_pq_groups
+            if dup_pq_groups:
+                self.instance_feature = nn.Parameter(
+                    torch.zeros(
+                        [1, self.anchor.shape[0], self.embed_dims]),
+                    requires_grad=feat_grad,
+                )
+            else:
+                self.instance_feature = nn.Parameter(
+                    torch.zeros(
+                        [num_learned_groups, self.anchor.shape[0], self.embed_dims]),
+                    requires_grad=feat_grad,
+                )
         else:
             self.instance_feature = None
         assert num_learned_groups >= num_learned_temp_groups, (
@@ -250,9 +259,14 @@ class InstanceBank(nn.Module):
 
     def get_pq_learned(self, batch_size, multiscale_lidar_feats):
         if self.training:
-            instance_feature = torch.tile(
-                self.instance_feature[None], (batch_size, 1, 1, 1)
-            )  # (bs, num_groups, num_anchor, embed_dims)
+            if self.dup_pq_groups:
+                instance_feature = torch.tile(
+                    self.instance_feature[None, 0:1], (batch_size, self.num_learned_groups, 1, 1)
+                )  # (bs, num_groups, num_anchor, embed_dims)
+            else:
+                instance_feature = torch.tile(
+                    self.instance_feature[None], (batch_size, 1, 1, 1)
+                )  # (bs, num_groups, num_anchor, embed_dims)
             anchor = torch.tile(
                 self.anchor[None], (batch_size, self.num_learned_groups, 1, 1))
         else:
