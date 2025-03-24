@@ -30,6 +30,8 @@ class Sparse4D(MVXTwoStageDetector):
         use_deformable_func: bool = False,
         depth_branch: Optional[Dict] = None,
         freeze_pts: bool = True,
+        freeze_img: bool = True,
+        freeze_fusion: bool = True,
         **kwargs
     ):
         super(Sparse4D, self).__init__(**kwargs)
@@ -49,6 +51,25 @@ class Sparse4D(MVXTwoStageDetector):
         if freeze_pts and self.with_pts_backbone:
             self.pts_backbone.eval()
             for param in self.pts_backbone.parameters():
+                param.requires_grad = False
+            self.pts_middle_encoder.eval()
+            for param in self.pts_middle_encoder.parameters():
+                param.requires_grad = False
+            self.pts_neck.eval()
+            for param in self.pts_neck.parameters():
+                param.requires_grad = False
+
+        if freeze_img and self.with_img_backbone:
+            self.img_backbone.eval()
+            for param in self.img_backbone.parameters():
+                param.requires_grad = False
+            if self.with_img_neck:
+                self.img_neck.eval()
+                for param in self.img_neck.parameters():
+                    param.requires_grad = False
+        if freeze_fusion and self.with_pts_fusion_layer:
+            self.pts_fusion_layer.eval()
+            for param in self.pts_fusion_layer.parameters():
                 param.requires_grad = False
 
     def extract_img_feat(self, img: Optional[Tensor], return_depth: bool = False, batch_input_metas=None):
