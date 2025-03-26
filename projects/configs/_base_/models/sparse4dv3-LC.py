@@ -3,10 +3,10 @@ _base_ = [
 ]
 
 multistage_heatmap = 2
-
+embed_dims = {{_base_.embed_dims}}
 model = dict(
     freeze_pts=True,
-    freeze_fusion=True,
+    freeze_fusion=False,
     freeze_img=True,
     init_cfg=[
         dict(type="Pretrained", checkpoint="ckpts/focalformer3d_converted/DeformFormer3D_C_R50_ep20_mAP300_NDS363.pth"),
@@ -36,11 +36,16 @@ model = dict(
         cam_lss=True,
         iterbev='bevfusion',
         iter_bev_cam=True,
+        input_img=True,
     ),
     pts_bbox_head=dict(
         reuse_first_heatmap=False,
         instance_bank=dict(
             num_heatmap_stages=multistage_heatmap,
+        ),
+        anchor_encoder=dict(
+            output_fc=True,
+            output_dim=embed_dims,
         )
     )
 )

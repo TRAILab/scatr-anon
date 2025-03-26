@@ -412,10 +412,10 @@ class ImageAug3D(BaseTransform):
             transform[:2, :2] = rotation
             transform[:2, 3] = translation
             new_imgs.append(np.array(new_img).astype(np.float32))
-            transforms.append(transform.numpy())
+            transforms.append(transform)
         data['img'] = new_imgs
         # update the calibration matrices
-        data['img_aug_matrix'] = transforms
+        data['img_aug_matrix'] = torch.stack(transforms)
         return data
 
 @TRANSFORMS.register_module()

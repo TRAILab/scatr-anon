@@ -7,7 +7,7 @@ import torch
 from mmdet3d.models.detectors.mvx_two_stage import MVXTwoStageDetector
 from mmdet3d.registry import MODELS
 from mmdet3d.structures import Det3DDataSample
-from torch import Tensor
+from torch import Tensor, nn
 
 from .grid_mask import GridMask
 
@@ -17,7 +17,8 @@ try:
 except:
     DAF_VALID = False
 
-from projects.mmdet3d_plugin.utils.misc import hash_tensor, hash_array  # debug tools
+from projects.mmdet3d_plugin.utils.misc import (hash_array,  # debug tools
+                                                hash_tensor)
 
 __all__ = ["Sparse4D"]
 
@@ -31,7 +32,7 @@ class Sparse4D(MVXTwoStageDetector):
         depth_branch: Optional[Dict] = None,
         freeze_pts: bool = True,
         freeze_img: bool = True,
-        freeze_fusion: bool = True,
+        freeze_fusion: bool = False,
         **kwargs
     ):
         super(Sparse4D, self).__init__(**kwargs)
@@ -67,12 +68,22 @@ class Sparse4D(MVXTwoStageDetector):
                 self.img_neck.eval()
                 for param in self.img_neck.parameters():
                     param.requires_grad = False
+            # Fix bn, from focalformer3d
+            def fix_bn(m):
+                if isinstance(m, nn.BatchNorm1d) or isinstance(m, nn.BatchNorm2d):
+                    m.track_running_stats = False
+            self.pts_voxel_encoder.apply(fix_bn)
+            self.pts_middle_encoder.apply(fix_bn)
+            self.pts_backbone.apply(fix_bn)
+            self.pts_neck.apply(fix_bn)
         if freeze_fusion and self.with_pts_fusion_layer:
             self.pts_fusion_layer.eval()
             for param in self.pts_fusion_layer.parameters():
                 param.requires_grad = False
 
     def extract_img_feat(self, img: Optional[Tensor], return_depth: bool = False, batch_input_metas=None):
+        img_feat = super().extract_img_feat(img, batch_input_metas)
+        return img_feat, None
         if img is None:
             return None, None
         focal = torch.tensor([
@@ -108,7 +119,8 @@ class Sparse4D(MVXTwoStageDetector):
 
     def extract_feat(self, batch_inputs_dict: Dict, batch_input_metas: List[Dict]):
         # img feature extraction
-        batch_img = batch_inputs_dict.get("img", None)
+        # output of preprocessor is imgs
+        batch_img = batch_inputs_dict.get("imgs", None)
         feature_maps, depths = self.extract_img_feat(
             batch_img,
             return_depth=self.training,
