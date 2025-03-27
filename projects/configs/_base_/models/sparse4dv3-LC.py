@@ -36,6 +36,7 @@ model = dict(
         cam_lss=True,
         iterbev='bevfusion',
         iter_bev_cam=True,
+        iterbev_wo_img=False,
         input_img=True,
     ),
     pts_bbox_head=dict(
