@@ -31,10 +31,10 @@ train_pipeline = [
         with_forecasting=False),
     # augmentations, kwargs in data_aug_conf
     # dict(type='TrackSample', db_sampler=db_sampler),  # no TrackSample in Fusion
-    dict(type='SeqGlobalRotScaleTrans'),
-    dict(type='SeqRandomFlip3D', sync_2d=False, flip_img=False),
+    # dict(type='SeqGlobalRotScaleTrans'),
+    # dict(type='SeqRandomFlip3D', sync_2d=False, flip_img=False),
     dict(type='PointShuffle'),
-    dict(type="PhotoMetricDistortionMultiViewImage"),
+    # dict(type="PhotoMetricDistortionMultiViewImage"),
     dict(
         type='SeqImageAug3D',
         final_dim=image_size,
@@ -42,7 +42,7 @@ train_pipeline = [
         bot_pct_lim=[0.0, 0.0],
         rand_flip=True,
         rot_lim=[-5.4, 5.4],
-        is_train=True),
+        is_train=False),
     # filter
     dict(type='PointsRangeFilter', point_cloud_range=point_cloud_range),
     dict(type='TrackRangeFilter', point_cloud_range=point_cloud_range),
@@ -83,6 +83,15 @@ test_pipeline = [
         use_dim=[0, 1, 2, 3, 4],
     ),
     dict(type='LoadMultiViewImageFromFiles', to_float32=True),
+    # resize image
+    dict(
+        type='ImageAug3D',
+        final_dim=image_size[::-1],
+        resize_lim=[0.5, 0.5],
+        bot_pct_lim=[0.0, 0.0],
+        rot_lim=[0.0, 0.0],
+        rand_flip=False,
+        is_train=False),
     dict(
         type="Pack3DTrackInputs",
         keys=["points", "img"],
@@ -93,19 +102,34 @@ test_pipeline = [
 
 data_aug_conf = dict(
     # lidar aug params
-    rot_range_lidar=[-0.3925 * 2, 0.3925 * 2],
-    scale_ratio_range_lidar=[0.9, 1.1],
-    translation_std_lidar=[0.5, 0.5, 0.5],
-    flip_ratio_bev_horizontal=0.5,
-    flip_ratio_bev_vertical=0.5,
+    # rot_range_lidar=[-0.3925 * 2, 0.3925 * 2],
+    # scale_ratio_range_lidar=[0.9, 1.1],
+    # translation_std_lidar=[0.5, 0.5, 0.5],
+    # flip_ratio_bev_horizontal=0.5,
+    # flip_ratio_bev_vertical=0.5,
+    # use_track_sample_3d=False,
+    # # img resize params
+    # W=1600,
+    # H=900,
+    # final_dim=image_size,
+    # # ImageAug3D params
+    # resize_lim=[0.4, 0.6],
+    # rot_lim=[-5.4, 5.4],
+    # rand_img_flip=True,
+    # lidar aug params
+    rot_range_lidar=[0,0],
+    scale_ratio_range_lidar=[1, 1],
+    translation_std_lidar=[0, 0, 0],
+    flip_ratio_bev_horizontal=0,
+    flip_ratio_bev_vertical=0,
     use_track_sample_3d=False,
     # img resize params
     W=1600,
     H=900,
     final_dim=image_size,
     # ImageAug3D params
-    resize_lim=[0.4, 0.6],
-    rot_lim=[-5.4, 5.4],
+    resize_lim=[0.5, 0.5],
+    rot_lim=[0, 0],
     rand_img_flip=True,
 )
 
@@ -124,8 +148,9 @@ val_dataloader = dict(
     )
 )
 
-test_evaluator = dict(
+test_dataloader = dict(
     dataset=dict(
         pipeline=test_pipeline,
+        modality=input_modality
     )
 )
