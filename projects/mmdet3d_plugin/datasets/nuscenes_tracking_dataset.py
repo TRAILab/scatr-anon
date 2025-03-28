@@ -98,7 +98,7 @@ class NuScenesTrackingDataset(NuScenesDataset):
             aug_config["crop"] = (crop_w, crop_h, crop_w+fW, crop_h+fH)
             # Flip
             aug_config["flip"] = np.random.choice([True, False]) and self.data_aug_conf.get(
-                "rand_flip", False)
+                "rand_img_flip", False)
             # Rotate
             aug_config["rotate"] = np.random.uniform(
                 *self.data_aug_conf.get("rot_lim", (0, 0)))

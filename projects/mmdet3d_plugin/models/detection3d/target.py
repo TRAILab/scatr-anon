@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 
 import numpy as np
 import torch
@@ -54,6 +54,10 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
         self.eps = eps
         self.reg_weights = torch.tensor(reg_weights)
         self.cls_wise_reg_weights = cls_wise_reg_weights
+        for key in self.cls_wise_reg_weights:
+            self.cls_wise_reg_weights[key] = torch.tensor(
+                self.cls_wise_reg_weights[key]
+            )
         self.dn_noise_scale = torch.tensor(dn_noise_scale)
         self.dn_cls_noise_prob = dn_cls_noise_prob
         self.max_dn_gt = max_dn_gt
@@ -98,12 +102,13 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
             prev_inst_inds=None,
     ):
         bs, num_learned_groups, num_pred, num_cls = cls_pred.shape
+        self.reg_weights = self.reg_weights.to(box_pred.device)
         if prev_inst_inds is None:
             prev_inst_inds = [None] * bs
-        # TODO replace the for loop with mmdet multiapply
         cls_pred_act = cls_pred.detach().sigmoid()
+        # multi_apply on bs dim
         cls_target, box_target, reg_weights, id_target = multi_apply(
-            self.sample_single,
+            self.sample_group,
             cls_pred_act,
             box_pred.detach(),
             cls_gt,
@@ -118,7 +123,7 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
         id_target = torch.stack(id_target)
         return cls_target, box_target, reg_weights, id_target
 
-    def sample_single(
+    def sample_group(
             self,
             cls_pred_act_i,
             box_pred_i,
@@ -127,112 +132,128 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
             id_gt_i,
             prev_inst_inds_i=None,):
         """
-        Sample targets for predictions in a single item from the batch.
-        Not batched.
-        # TODO: Replace match cost and assignment code with code from the latest mmdet.
-        # The current implementation uses a custom matching cost and assignment logic.
-        # The new implementation should leverage the latest mmdet library's utilities
-        # for computing matching costs and performing the assignment, which are expected
-        # to be more efficient and cleaner. This involves:
-        # 1. Importing the necessary functions from mmdet.
-        # 2. Replacing the custom cost computation with mmdet's cost computation.
-        # 3. Using mmdet's assignment function to replace the current linear_sum_assignment.
-        # The current implementation uses a custom method for computing the match cost and performing the assignment.
-        # The latest mmdet library has a more optimized and cleaner implementation for these operations.
-        # Refer to the mmdet3d/models/detectors/assigners/ directory in the mmdet repository for the latest code.
-        # Specifically, look at the HungarianAssigner3D class and its methods for computing the cost and performing the assignment.
+        For a single sample in a batch, compute the the targets for all the samples in the group
         """
-        # construct targets
-        num_groups, num_preds, num_cls = cls_pred_act_i.shape
-        cls_target_i = cls_pred_act_i.new_full(
-            (num_groups, num_preds,), num_cls, dtype=torch.long)  # (num groups, num_preds)
-        box_target_i = torch.zeros_like(box_pred_i)
-        reg_weights_i = torch.zeros_like(box_pred_i)
-        id_target_i = id_gt_i.new_full(
-            (num_groups, num_preds,), UNTRACKED_ID, dtype=torch.long)
-
-        # in the case of no gt objects to assign
-        if len(cls_gt_i) == 0:
-            return cls_target_i, box_target_i, reg_weights_i, id_target_i
+        num_learned_groups, num_pred, num_cls = cls_pred_act_i.shape
+        if prev_inst_inds_i is None:
+            prev_inst_inds_i = [None] * num_learned_groups
 
         # encode bbox, normalize wlh, split yaw into sin/cos
         encoded_box_gt_i = self.encode_reg_target_single(
             box_gt_i, box_pred_i.device)
 
+        # multi_apply on group dim
+        cls_target, box_target, reg_weights, id_target = multi_apply(
+            self.sample_single,
+            cls_pred_act_i,
+            box_pred_i,
+            [cls_gt_i] * num_learned_groups,
+            [encoded_box_gt_i] * num_learned_groups,
+            [id_gt_i] * num_learned_groups,
+            prev_inst_inds_i,
+        )
+
+        # stack to tensor along batch dimension
+        cls_target = torch.stack(cls_target)
+        box_target = torch.stack(box_target)
+        reg_weights = torch.stack(reg_weights)
+        id_target = torch.stack(id_target)
+
+        return cls_target, box_target, reg_weights, id_target
+
+    def sample_single(
+        self,
+        cls_pred_act_i,
+        box_pred_i,
+        cls_gt_i,
+        encoded_box_gt_i,
+        id_gt_i,
+        prev_inst_inds_i=None
+    ):
+        """
+        Sample targets for predictions in a single item from the batch.
+        Not batched.
+        """
+        # construct targets
+        num_preds, num_cls = cls_pred_act_i.shape
+        cls_target_i = cls_pred_act_i.new_full(
+            (num_preds,), num_cls, dtype=cls_gt_i.dtype)
+        box_target_i = torch.zeros_like(box_pred_i)
+        reg_weights_i = torch.zeros_like(box_pred_i)
+        id_target_i = id_gt_i.new_full(
+            (num_preds,), UNTRACKED_ID, dtype=id_gt_i.dtype)
+
+        # in the case of no gt objects to assign
+        if len(cls_gt_i) == 0:
+            return cls_target_i, box_target_i, reg_weights_i, id_target_i
+
         # if encoded is nan, set reg_weights to 0, else 1
         # (num gt, bbox size)
-        instance_reg_weights_i = torch.logical_not(
+        reg_weights_gt_i = torch.logical_not(
             encoded_box_gt_i.isnan()).to(dtype=encoded_box_gt_i.dtype)
 
         # set reg_weights by class
         # used to ignore orientation for traffic cones
         for class_label, weight in self.cls_wise_reg_weights.items():
             # (num gt, bbox size)
-            instance_reg_weights_i = torch.where(
+            reg_weights_gt_i = torch.where(
                 (cls_gt_i == class_label)[:, None],  # (num gt, 1)
-                instance_reg_weights_i.new_tensor(weight),
-                instance_reg_weights_i,
+                weight.to(encoded_box_gt_i.device),  # (bbox size)
+                reg_weights_gt_i,
             )
 
-        # split predictions between tq and non-tq
         # mask on preds
-        tq_mask = cls_gt_i.new_zeros(
-            (num_groups, num_preds,), dtype=torch.bool)
+        tq_mask = cls_gt_i.new_zeros((num_preds,), dtype=torch.bool)
         if prev_inst_inds_i is not None and self.supervise_qc:
-            track_id_2_gt_ind = {
-                track_id.item(): gt_ind for gt_ind, track_id in enumerate(id_gt_i)}
-            # mask on gt
-            nb_obj_mask = torch.logical_not(
-                torch.isin(id_gt_i, prev_inst_inds_i))
-            _, num_tq = prev_inst_inds_i.shape
-            tq_mask[:, :num_tq] = prev_inst_inds_i != UNTRACKED_ID
+            # TODO move tq assignment to a separate method for clarity
+            num_tq = prev_inst_inds_i.shape[0]
 
-            # construct target for prev tracked objects
-            # prev_inds_valid_mask corresponds to tq that were not UNTRACKED in the prev frame
-            # (num_groups, num_tq)
-            prev_inds_valid_mask = prev_inst_inds_i != UNTRACKED_ID
-            for group_idx in range(num_groups):
-                # tensor of prev_inst_inds that are not UNTRACKED_ID
-                valid_prev_inst_inds = prev_inst_inds_i[group_idx][prev_inds_valid_mask[group_idx]]
-                # indices of the gt objects in curr frame that were also in the prev frame.
-                # if the prev inst ind is not in the track_id_2_gt_ind (i.e. not in the current frame), set to -1
-                gt_inds = torch.tensor([
-                    track_id_2_gt_ind.get(track_id.item(), -1) for track_id in valid_prev_inst_inds], dtype=torch.long)
+            # match btwn prev inst IDs and current gt IDs
+            # (num_tq, num_gt)
+            matching_mat = prev_inst_inds_i[:, None] == id_gt_i[None]
 
-                # Filter valid gt indices
-                # (num gt obj from prev iteration)
-                valid_gt_mask = gt_inds != -1
-                # (num tracked/non-nb gt in current frame)
-                valid_gt_inds = gt_inds[valid_gt_mask]
-                # and corresponding valid pred indices. (num tq) --> nonzero, (num gt obj from prev iter) --> valid_gt_mask (num_tracked/non-nb gt)
-                valid_pred_inds = torch.nonzero(prev_inds_valid_mask[group_idx], as_tuple=False).squeeze(1)[
-                    valid_gt_mask]  # (num tracked/non-nb gt)
-                # construct target for tq
-                cls_target_i[group_idx,
-                             valid_pred_inds] = cls_gt_i[valid_gt_inds]
-                box_target_i[group_idx,
-                             valid_pred_inds] = encoded_box_gt_i[valid_gt_inds]
-                reg_weights_i[group_idx,
-                              valid_pred_inds] = instance_reg_weights_i[valid_gt_inds]
-                id_target_i[group_idx,
-                            valid_pred_inds] = id_gt_i[valid_gt_inds]
+            # check for multiple matches
+            num_matches = matching_mat.sum(dim=1)
+            if torch.any(num_matches > 1):
+                print(
+                    "Multiple matches found between tq and gt. This means there is a set of GT with duplicate gt IDs")
 
-            # pq can include unassigned tq
+            # determine matching indices, -1 for no match
+            matching_idxs = torch.where(
+                matching_mat,
+                torch.arange(len(id_gt_i), device=matching_mat.device).expand(len(prev_inst_inds_i), -1),
+                -1
+            )
+            # collapse multiple matches to index, -1 for no match
+            nb_obj_mask = (matching_idxs == -1).all(dim=0) # gt was not matched to any prev inst
+            matching_idxs = matching_idxs.max(dim=1).values
+
+            valid_matches_mask = matching_idxs != -1
+            valid_matches = matching_idxs[valid_matches_mask]
+            # check valid matches
+            cls_target_i[:num_tq][valid_matches_mask] = cls_gt_i[valid_matches]
+            box_target_i[:num_tq][valid_matches_mask] = encoded_box_gt_i[valid_matches]
+            reg_weights_i[:num_tq][valid_matches_mask] = reg_weights_gt_i[valid_matches]
+            id_target_i[:num_tq][valid_matches_mask] = id_gt_i[valid_matches]
+
+            # pq can include unassigned tq if self.second_chance_tq is True
             if self.second_chance_tq:
+                # TODO second_chance_tq is depreciated
+                tq_mask[:num_tq] = prev_inst_inds_i != UNTRACKED_ID
                 pq_mask = torch.logical_not(tq_mask)  # (num groups, num_preds)
             else:
                 pq_mask = torch.zeros_like(tq_mask, dtype=torch.bool)
-                pq_mask[:, num_tq:] = True
+                pq_mask[num_tq:] = True
+
             # pq preds
-            cls_pred_act_pq = [cls_pred_act[mask_i]
-                               for cls_pred_act, mask_i in zip(cls_pred_act_i, pq_mask)]
-            box_pred_pq = [box_pred[mask_i]
-                           for box_pred, mask_i in zip(box_pred_i, pq_mask)]
+            cls_pred_act_pq = cls_pred_act_i[pq_mask]
+            box_pred_pq = box_pred_i[pq_mask]
+
             # newborn labels
             cls_gt_nb = cls_gt_i[nb_obj_mask]
             encoded_box_gt_nb = encoded_box_gt_i[nb_obj_mask]
             id_gt_nb = id_gt_i[nb_obj_mask]
-            instance_reg_weights_nb = instance_reg_weights_i[nb_obj_mask]
+            instance_reg_weights_nb = reg_weights_gt_i[nb_obj_mask]
         else:
             pq_mask = torch.logical_not(tq_mask)  # (num groups, num_preds)
             num_tq = 0
@@ -241,29 +262,27 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
             cls_gt_nb = cls_gt_i
             encoded_box_gt_nb = encoded_box_gt_i
             id_gt_nb = id_gt_i
-            instance_reg_weights_nb = instance_reg_weights_i
+            instance_reg_weights_nb = reg_weights_gt_i
+
+        if len(cls_gt_nb) == 0:
+            return cls_target_i, box_target_i, reg_weights_i, id_target_i
 
         # perform hungarian assignment on remaining predictions
-        if len(cls_gt_nb) != 0:
-            cls_target_pq, box_target_pq, reg_weights_pq, id_target_pq = self._sample_single_pq(
-                cls_pred_act_pq,
-                box_pred_pq,
-                cls_gt_nb,
-                encoded_box_gt_nb,
-                id_gt_nb,
-                instance_reg_weights_nb,
-            )
+        cls_target_pq, box_target_pq, reg_weights_pq, id_target_pq = self._sample_single_pq(
+            cls_pred_act_pq,
+            box_pred_pq,
+            cls_gt_nb,
+            encoded_box_gt_nb,
+            id_gt_nb,
+            instance_reg_weights_nb,
+        )
 
-            # merge pq targets back into total target
-            for group_idx in range(num_groups):
-                cls_target_i[group_idx, pq_mask[group_idx]
-                             ] = cls_target_pq[group_idx]
-                box_target_i[group_idx, pq_mask[group_idx]
-                             ] = box_target_pq[group_idx]
-                reg_weights_i[group_idx, pq_mask[group_idx]
-                              ] = reg_weights_pq[group_idx]
-                id_target_i[group_idx, pq_mask[group_idx]
-                            ] = id_target_pq[group_idx].to(torch.long)
+        # merge pq targets back into total target
+        # TODO second_chance_tq is depreciated, so just stack the tq, pq targets for efficiency
+        cls_target_i[pq_mask] = cls_target_pq
+        box_target_i[pq_mask] = box_target_pq
+        reg_weights_i[pq_mask] = reg_weights_pq
+        id_target_i[pq_mask] = id_target_pq.to(torch.long)
 
         return cls_target_i, box_target_i, reg_weights_i, id_target_i
 
@@ -277,58 +296,58 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
             instance_reg_weights_i
     ):
         """
-        Generate targets for proposal query predictions in a single item from the batch.
-        The pq preds are grouped.
-        Each group may have a different number of preds
+        Generate targets for proposal query predictions in a single item from the group in the batch.
+
+        # TODO: Replace match cost and assignment code with code from the latest mmdet.
+        # The current implementation uses a custom matching cost and assignment logic.
+        # The new implementation should leverage the latest mmdet library's utilities
+        # for computing matching costs and performing the assignment, which are expected
+        # to be more efficient and cleaner. This involves:
+        # 1. Importing the necessary functions from mmdet.
+        # 2. Replacing the custom cost computation with mmdet's cost computation.
+        # The current implementation uses a custom method for computing the match cost and performing the assignment.
+        # The latest mmdet library has a more optimized and cleaner implementation for these operations.
+        # Refer to the mmdet3d/models/detectors/assigners/ directory in the mmdet repository for the latest code.
+        # Specifically, look at the HungarianAssigner3D class and its methods for computing the cost and performing the assignment.
         """
-        num_groups = len(cls_pred_act_i)
-        num_cls = cls_pred_act_i[0].shape[-1]
+        num_cls = cls_pred_act_i.shape[-1]
         # use num_cls as cls_id of background assignment
         # cls_target_i (num_preds, 1)
-        cls_target_i = [torch.full_like(
-            cls_pred[..., 0], num_cls, dtype=torch.long) for cls_pred in cls_pred_act_i]
-        box_target_i = [torch.zeros_like(box_pred) for box_pred in box_pred_i]
-        reg_weights_i = [torch.zeros_like(box_pred) for box_pred in box_pred_i]
-        id_target_i = [id_gt_i.new_full((cls_pred.shape[0],), UNTRACKED_ID, dtype=torch.long) for cls_pred in cls_pred_act_i]
+        cls_target_i = cls_pred_act_i.new_full(
+            cls_pred_act_i.shape[:1], num_cls, dtype=cls_gt_i.dtype)
+        box_target_i = torch.zeros_like(box_pred_i)
+        reg_weights_i = torch.zeros_like(box_pred_i)
+        id_target_i = id_gt_i.new_full(
+            cls_pred_act_i.shape[:1], UNTRACKED_ID, dtype=id_gt_i.dtype)
 
         # in the case of no gt objects to assign
         if len(cls_gt_i) == 0:
             return cls_target_i, box_target_i, reg_weights_i, id_target_i
 
         # compute assignment costs for all groups
-        cls_cost = [self._cls_cost_group(cls_pred, cls_gt_i)
-                    for cls_pred in cls_pred_act_i]
-        box_cost = [
-            self._box_cost_group(box_pred, encoded_box_gt_i,
-                                 instance_reg_weights_i)
-            for box_pred in box_pred_i]
+        cls_cost = self._cls_cost_group(cls_pred_act_i, cls_gt_i)
+        box_cost = self._box_cost_group(box_pred_i, encoded_box_gt_i,instance_reg_weights_i)
 
         # perform hungarian matching based on costs
-        cost = [(cls_cost[group_idx] + box_cost[group_idx]).detach().cpu().numpy()
-                for group_idx in range(num_groups)]
-        cost = [np.where(np.isneginf(c) | np.isnan(c), np.inf, c)
-                for c in cost]
-        pred_idx, target_idx = zip(*[linear_sum_assignment(c) for c in cost])
-        pred_idx = [torch.from_numpy(idx) for idx in pred_idx]
-        target_idx = [torch.from_numpy(idx) for idx in target_idx]
+        cost = (cls_cost + box_cost).detach().cpu().numpy()
+        cost = np.where(np.isneginf(cost) | np.isnan(cost), np.inf, cost)
+        pred_idx, target_idx = linear_sum_assignment(cost)
+        pred_idx = torch.from_numpy(pred_idx)
+        target_idx = torch.from_numpy(target_idx)
 
         # insert gt based on assigned indices
-        for group_idx in range(num_groups):
-            cls_target_i[group_idx][pred_idx[group_idx]
-                                    ] = cls_gt_i[target_idx[group_idx]]
-            box_target_i[group_idx][pred_idx[group_idx]
-                                    ] = encoded_box_gt_i[target_idx[group_idx]]
-            reg_weights_i[group_idx][pred_idx[group_idx]
-                                     ] = instance_reg_weights_i[target_idx[group_idx]]
-            id_target_i[group_idx][pred_idx[group_idx]
-                                   ] = id_gt_i[target_idx[group_idx]]
+        cls_target_i[pred_idx] = cls_gt_i[target_idx]
+        box_target_i[pred_idx] = encoded_box_gt_i[target_idx]
+        reg_weights_i[pred_idx] = instance_reg_weights_i[target_idx]
+        id_target_i[pred_idx] = id_gt_i[target_idx]
+
         return cls_target_i, box_target_i, reg_weights_i, id_target_i
 
     def _cls_cost_group(self, cls_pred_act_i, cls_target_i):
         """
         Compute the class cost between the predicted and target classes for a group of predictions.
         Follows the focal loss formulation.
-        cls_pred_act is activated (sigmoid applied, range [0, 1])
+        cls_pred_act is activated (sigmoid applied, range [0, 1]), unlike in mmdetection match_cost.py
         """
         eps = torch.finfo(cls_pred_act_i.dtype).eps
         neg_cost = (
@@ -351,6 +370,10 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
         Compute the box cost between the predicted and target boxes for a group of predictions.
         box_pred_i: (num_groups, num_preds, box_dim)
         box_target_i: (num_gt, box_dim), never group dim
+
+        TODO try out torch.cdist. This may be more efficient, but does not allow for 
+        custom instance_reg_weights (turning off orientation for traffic cones).
+        Could get around this by globally turning off orientation in the box cost during assignment.
         """
         if len(box_pred_i.shape) == 3:
             return torch.sum(
@@ -481,7 +504,8 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
             num_cls = cat_encoding.in_channels
             # add noise to cls target by setting random entries to a different class
             noised_cls_target = torch.cat([cls_target, cls_target], dim=2)
-            noise_mask = torch.rand_like(noised_cls_target.float()) < self.dn_cls_noise_prob
+            noise_mask = torch.rand_like(
+                noised_cls_target.float()) < self.dn_cls_noise_prob
             noise_cls = torch.randint_like(noised_cls_target, num_cls)
             noised_cls_target[noise_mask] = noise_cls[noise_mask]
             # clamp to avoid -1 from padding. Note, cls_target will still have -1 for padding
@@ -492,10 +516,12 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
             noised_cls_target_oh = F.one_hot(noised_cls_target, num_cls)
 
             # cat encoding is Conv1D, so permute to (bs, num_dn_groups, num_cls, num_gt * 2)
-            noised_cls_target_oh = noised_cls_target_oh.permute(0, 1, 3, 2).reshape(-1, num_cls, num_gt)
+            noised_cls_target_oh = noised_cls_target_oh.permute(
+                0, 1, 3, 2).reshape(-1, num_cls, num_gt)
             cat_encoded_feat = cat_encoding(noised_cls_target_oh.float())
             # unflatten batch and group dims
-            cat_encoded_feat = cat_encoded_feat.reshape(bs, self.num_dn_groups, cat_encoding.out_channels, num_gt)
+            cat_encoded_feat = cat_encoded_feat.reshape(
+                bs, self.num_dn_groups, cat_encoding.out_channels, num_gt)
             # move embed dims back to last dim
             cat_encoded_feat = cat_encoded_feat.permute(0, 1, 3, 2)
             dn_feat += cat_encoded_feat
@@ -518,8 +544,8 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
             # box_target and cls_target are tiled from (bs, num_gt) to (bs, num_dn_groups, num_gt)
             # just use the first group, since they are identical
             box_cost_i = self._box_cost_group(
-                dn_anchor[batch_idx], 
-                box_target[batch_idx,0], 
+                dn_anchor[batch_idx],
+                box_target[batch_idx, 0],
                 torch.ones_like(box_target[batch_idx, 0])
             )  # (num_dn_groups, num dn queries, num_gt)
             cost = box_cost_i.cpu().numpy()
@@ -612,7 +638,8 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
             # this case is when there are multiple dn groups per learned group
             # reshape from (bs, num learned groups, num_dn_per_group * num dn groups per learned group) to
             # (bs, total num dn groups, num_dn_per_group, ...)
-            dn_feat = dn_feat.reshape(bs, self.num_dn_groups, num_dn_per_dn_grp, self.embed_dims)
+            dn_feat = dn_feat.reshape(
+                bs, self.num_dn_groups, num_dn_per_dn_grp, self.embed_dims)
             dn_anchor = dn_anchor.reshape(
                 bs, self.num_dn_groups, num_dn_per_dn_grp, dn_anchor.shape[-1])
 
@@ -676,7 +703,11 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
             else:
                 temp_meta = temp_meta[:, :, temp_mask]
 
-            mask = temporal_valid_mask[:, None, None]
+            # mask = temporal_valid_mask[:, None, None]
+            # temporal_valid_mask contains the mask on the learned groups, shape (bs, learned_groups)
+            # If none of the learned groups in a sample are true in mask, it is treated as the start
+            # of a new sequence and the temp_meta is not updated
+            mask = temporal_valid_mask.any(dim=1, keepdim=True).reshape(bs, 1, 1)
             if meta.dim() == 4:
                 mask = mask.unsqueeze(dim=-1)
             # update temp_meta if valid_mask is True (is it from the same seq)
@@ -689,12 +720,13 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
         # append dn features and dn anchors to learned queries and anchors
         # reshape output[0] and output[1] back to num_learned_queries
         output[0] = torch.cat([
-            instance_feature, 
+            instance_feature,
             output[0].reshape(bs, num_learned_groups, num_dn, self.embed_dims)
         ], dim=2)
         output[1] = torch.cat([
-            anchor, 
-            output[1].reshape(bs, num_learned_groups, num_dn, output[1].shape[-1])
+            anchor,
+            output[1].reshape(bs, num_learned_groups,
+                              num_dn, output[1].shape[-1])
         ], dim=2)
         return output
 
