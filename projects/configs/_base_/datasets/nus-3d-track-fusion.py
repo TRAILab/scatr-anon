@@ -37,7 +37,7 @@ train_pipeline = [
     # dict(type="PhotoMetricDistortionMultiViewImage"),
     dict(
         type='SeqImageAug3D',
-        final_dim=image_size,
+        final_dim=image_size[::-1], # (height, width)
         resize_lim=[0.4, 0.6],
         bot_pct_lim=[0.0, 0.0],
         rand_flip=True,
@@ -126,7 +126,7 @@ data_aug_conf = dict(
     # img resize params
     W=1600,
     H=900,
-    final_dim=image_size,
+    final_dim=image_size[::-1], # (height, width)
     # ImageAug3D params
     resize_lim=[0.5, 0.5],
     rot_lim=[0, 0],

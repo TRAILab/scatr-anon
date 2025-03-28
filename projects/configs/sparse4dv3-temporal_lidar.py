@@ -60,6 +60,10 @@ model = dict(
             dataset_name={{_base_.dataset_type}},
             feat_pool=True,
         ),
+        anchor_encoder=dict(
+            output_fc=True,
+            output_dim={{_base_.embed_dims}},
+        ),
         refine_layer=dict(
             num_cls={{_base_.num_classes}}, # from dataset
         ),
