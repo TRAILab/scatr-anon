@@ -50,6 +50,7 @@ CONTAINER_CMD="apptainer exec --nv -c -e --writable-tmpfs --pwd $CONTAINER_PATH 
 --env "WANDB_MODE=$WANDB_MODE"
 --env "CUDA_LAUNCH_BLOCKING=1"
 --env "TORCH_USE_CUDA_DSA=1"
+--env "TORCH_NCCL_ENABLE_MONITORING=0"
 $VOLUMES \
 $SING_IMG \
 $BASE_CMD
