@@ -97,6 +97,8 @@ class TrackSampler3D(TrackImgSampler):
         self.num_groups = len(self.group_indices)
         assert self.num_groups >= self.global_batch_size, (
             f"only {self.num_groups} clips loaded but {self.world_size} gpus were given, each with a batch size of {self.batch_size}.")
+        
+        self.num_batches = len([x for x in self])  # length is dependent on world size and batch size, calculation too complex, brute force computation of length
 
     def get_CBGS_sample_indices(self, group_indices):
         class_sample_idxs = [[] for cat in self.classes]
@@ -213,4 +215,4 @@ class TrackSampler3D(TrackImgSampler):
                 yield curr_batch
 
     def __len__(self) -> int:
-        return math.ceil(sum(len(group) for group in self.group_indices) / self.batch_size / self.world_size)
+        return self.num_batches
