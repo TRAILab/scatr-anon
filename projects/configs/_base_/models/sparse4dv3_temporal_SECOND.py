@@ -1,7 +1,8 @@
 use_deformable_func = True
-embed_dims = 256
+embed_dims = 128
 num_heads = 8
-num_learned_groups = 1
+num_learned_groups = 2
+num_learned_temp_groups = 2
 num_dn_groups = 6
 num_temp_dn_groups = 3
 num_decoder = 6
@@ -14,12 +15,17 @@ tracking_threshold = 0.2
 multistage_heatmap = 1  # 1 for LiDAR, 2 for fusion, False for no heatmap init
 init_pq_with_heatmap = False
 
+feat_pool = True
+dup_pq_groups = True
+
 voxel_size = [0.075, 0.075, 0.2]
 
 model = dict(
     type="Sparse4D",
     use_deformable_func=use_deformable_func,
     freeze_pts=True,
+    freeze_fusion=False,
+    freeze_img=True,
     data_preprocessor=dict(
         type='Det3DDataPreprocessor',
         voxel=True,
@@ -81,13 +87,14 @@ model = dict(
         # other sparse4D params
         instance_bank=dict(
             type="InstanceBank",
-            num_anchor=900,
+            num_anchor=300,
             num_learned_groups=num_learned_groups,
-            num_learned_temp_groups=num_temp_dn_groups,
+            num_learned_temp_groups=num_learned_temp_groups,
+            group_selection=['topk', 'random'],
             embed_dims=embed_dims,
-            anchor="_nuscenes_kmeans900.npy",
+            anchor="_nuscenes_kmeans300.npy",
             anchor_handler=dict(type="SparseBox3DKeyPointsGenerator"),
-            num_temp_instances=600 if temporal else -1,
+            num_temp_instances=200 if temporal else -1,
             confidence_decay=0.6,
             feat_grad=True,  # true for multiple learned groups
             # heatmap init params
@@ -96,11 +103,13 @@ model = dict(
             xy_size=(180, 180),
             nms_kernel_size=3,
             num_bbox_pool_points=7,
+            feat_pool=feat_pool,
+            dup_pq_groups=dup_pq_groups,
         ),
         anchor_encoder=dict(
             type="SparseBox3DEncoder",
             vel_dims=3,
-            embed_dims=[128, 32, 32, 64] if decouple_attn else 256,
+            embed_dims=[128, 32, 32, 64] if decouple_attn else embed_dims,
             mode="cat" if decouple_attn else "add",
             output_fc=not decouple_attn,
             in_loops=1,
@@ -179,6 +188,8 @@ model = dict(
             cls_weight=2.0,
             box_weight=0.25,
             reg_weights=[2.0] * 3 + [0.5] * 3 + [0.0] * 4,
+            feat_pool=feat_pool,
+            second_chance_tq=True
         ),
         loss_cls=dict(
             type="mmdet.FocalLoss",

@@ -126,7 +126,7 @@ data_aug_conf = {
     "rot_lim": (-5.4, 5.4),
     "W": 1600,
     "H": 900,
-    "rand_flip": True,
+    "rand_img_flip": True,
     "rot3d_range": [-0.3925, 0.3925],
 }
 

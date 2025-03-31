@@ -1,7 +1,7 @@
 _base_ = [
     './_base_/default_runtime.py',
-    './_base_/datasets/nus-3d-track-lidar.py',
-    './_base_/models/sparse4dv3_temporal_SECOND.py',]
+    './_base_/datasets/nus-3d-track-fusion.py',
+    './_base_/models/sparse4dv3-LC.py',]
 
 # ================ base config ===================
 plugin = True
@@ -9,15 +9,16 @@ plugin_dir = "projects/mmdet3d_plugin/"
 dist_params = dict(backend="nccl")
 log_level = "INFO"
 
-batch_size = 6
+batch_size = 8
 num_gpus = 8
 total_batch_size = batch_size * num_gpus
-num_epochs = 17
+num_epochs = 20
 checkpoint_epoch_interval = 1
-val_epoch_interval = 2
+val_epoch_interval = 1
+image_size = (800, 448) # (width, height)
 
-short_name = "lidar-simple-split_cbgs"
-work_dir = f"work_dirs/sparse4dv3-temporal_lidar_1x{num_gpus}_bs{batch_size}-{num_epochs}e_{short_name}"
+short_name = "baseline-LC"
+work_dir = f"work_dirs/mini_val/sparse4dv3-LC_nusc-{num_gpus}_bs{batch_size}_{num_epochs}e_{short_name}"
 
 load_from = 'ckpts/focalformer3d_converted/DeformFormer3D_L_iterimg_ep20_mAP655_NDS707.pth'
 # resume_from = 'work_dirs/sparse4dv3-temporal_lidar_1x8_bs6-12e_lidar-group/epoch_4.pth'
@@ -50,6 +51,10 @@ model = dict(
             point_cloud_range=point_cloud_range,
         )
     ),
+    pts_fusion_layer=dict(
+        pc_range=point_cloud_range,
+        img_scale=(image_size[1], image_size[0]),
+    ),
     pts_bbox_head=dict(
         point_cloud_range=point_cloud_range,
         instance_bank=dict(
@@ -59,10 +64,6 @@ model = dict(
             num_temp_instances=200,
             dataset_name={{_base_.dataset_type}},
             feat_pool=True,
-        ),
-        anchor_encoder=dict(
-            output_fc=True,
-            output_dim={{_base_.embed_dims}},
         ),
         refine_layer=dict(
             num_cls={{_base_.num_classes}}, # from dataset
@@ -232,10 +233,10 @@ env_cfg = dict(
 # grid sampling backprop is not deterministic
 randomness = dict(seed=0, deterministic=False)
 
-# # only set for debugging
+# only set for debugging
 # cfg = dict(
 #     model_wrapper_cfg=dict(
 #         type='MMDistributedDataParallel',
 #         find_unused_parameters=True,
-#         detect_anomalous_params=False),
+#         detect_anomalous_params=True),
 # )

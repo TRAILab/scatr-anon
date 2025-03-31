@@ -5,13 +5,14 @@
 # https://github.com/NVlabs/FocalFormer3D/blob/main/LICENSE
 
 import torch
-from mmcv.cnn import build_conv_layer, ConvModule
-from torch import nn
-from mmdet3d.registry import MODELS
-import torchvision.models.resnet as resnet
 import torchvision.models.mobilenetv2 as mobilenetv2
+import torchvision.models.resnet as resnet
+from mmcv.cnn import ConvModule, build_conv_layer
+from mmdet3d.registry import MODELS
+from torch import nn
 
-from ..utils.encoder_utils import I2P
+from ..utils.encoder_utils import I2P, LocalContextAttentionBlock
+
 
 class FocalEncoderLayer(nn.Module):
     def __init__(self, hidden_channel, iterbev='bevfusion', max_points_height=5, iterbev_wo_img=False, 

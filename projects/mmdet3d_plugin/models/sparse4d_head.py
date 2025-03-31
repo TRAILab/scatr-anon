@@ -567,9 +567,9 @@ class Sparse4DHead(BaseModule):
             dn_anchor = anchor[:, :, num_free_instance:]
             # reshape back from (bs, num_learned_groups, num_dn_anchor * dn_grp_per_lrn_gro, embed_dim) 
             # to (bs, num_dn_groups, num_dn_anchor, embbed_dim)
-            dn_instance_feature = dn_instance_feature.view(
+            dn_instance_feature = dn_instance_feature.reshape(
                 batch_size, num_dn_groups, dn_per_dn_grp, -1)
-            dn_anchor = dn_anchor.view(
+            dn_anchor = dn_anchor.reshape(
                 batch_size, num_dn_groups, dn_per_dn_grp, -1)
             self.sampler.cache_dn(
                 dn_instance_feature,
@@ -622,19 +622,18 @@ class Sparse4DHead(BaseModule):
         quality = model_outs["quality"]
         output_dict = {}
         prev_instance_inds = self.instance_bank.instance_inds_training
-        batch_size = len(gt_cls)
-        if prev_instance_inds is None:
-            prev_instance_inds = [None for i in range(batch_size)]
-        else:
-            # if not mask (not the same sequence), set to None
+        if prev_instance_inds is not None:
+            # if not mask (not the same sequence for sample in batch), set to None
             prev_instance_inds = [
-                prev_instance_inds[bs] if self.instance_bank.mask[bs] else None
-                for bs in range(batch_size)
-            ]
+                [inds if mask else None # iterate through group
+                for inds, mask in zip(prev_inst_ind_single, mask_single)]
+                for (prev_inst_ind_single, mask_single) in zip(prev_instance_inds, self.instance_bank.mask) # iterate through batch
+            ] # (bs, num groups, num preds/None)
+
         for decoder_idx, (cls, reg, qt) in enumerate(
             zip(cls_scores, reg_preds, quality)
         ):
-            # TODO move code to compute loss on a given decoder layer to a separate method
+            # TODO move code to compute loss on a given decoder layer to a separate method, avoid nesting
             reg = reg[..., : len(self.reg_weights)]
             cls_target, reg_target, reg_weights, id_target = self.sampler.sample(
                 cls,
@@ -714,7 +713,7 @@ class Sparse4DHead(BaseModule):
 
         group_indices = torch.arange(num_groups).view(
             1, -1, 1).expand(bs, -1, k)
-        # cache id target to intsance_inds for the next timestep
+        # cache id target to instance_inds for the next timestep
         self.instance_bank.instance_inds_training = id_target[
             batch_indices, group_indices,
             self.instance_bank.cached_indices]
@@ -798,26 +797,31 @@ class Sparse4DHead(BaseModule):
             num_temp_instances = 0
         else:
             num_temp_instances = self.instance_bank.num_temp_instances
-
-        batch_size = len(gt_id)
+        batch_size, num_groups, num_preds = id_target.shape
         tq_conf, pq_conf = conf[:, :, :num_temp_instances], conf[:,:, num_temp_instances:]
         tq_id_target, pq_id_target = id_target[:, :, :num_temp_instances], id_target[:, :, num_temp_instances:]
         device = pq_conf.device
 
         if prev_instance_inds is None or all([x is None for x in prev_instance_inds]):
-            valid_prev_instance_inds = [torch.empty(
-                (0,), device=conf.device) for _ in range(batch_size)]
+            prev_instance_inds_list = [[torch.empty((0,), device=device)] * num_groups for _ in range(batch_size)]
         else:
             # Convert instance_inds to a tensor and filter out UNTRACKED_ID values
-            valid_prev_instance_inds = [
-                inds[inds != UNTRACKED_ID] if inds is not None else torch.empty(
-                    (0,), device=device)
-                for inds in prev_instance_inds
+            prev_instance_inds_list = [
+                [inds if inds is not None else torch.empty((0,), device=device)
+                    for inds in prev_instance_inds_i] # iterate over groups
+                for prev_instance_inds_i in prev_instance_inds # iterate over batch
             ]
 
         # Create a mask for which pq were in prev frame, (bs, num_temp_instances)
-        prev_pq_mask = torch.stack([torch.isin(pq_id_target_i, valid_prev_instance_inds_i) for (
-            pq_id_target_i, valid_prev_instance_inds_i) in zip(pq_id_target, valid_prev_instance_inds)])
+        prev_pq_mask = torch.stack([
+            # iterate through group
+            torch.stack([
+                torch.isin(tgt_ids, prev_ids) & (tgt_ids!=UNTRACKED_ID) 
+                for tgt_ids, prev_ids in zip(pq_id_target_i, prev_instance_inds_i)
+            ])
+            # iterate through batch
+            for (pq_id_target_i, prev_instance_inds_i) in zip(pq_id_target, prev_instance_inds_list)
+        ])
         # Create a mask for current IDs, check not UNTRACKED_ID
         pos_pq_mask = pq_id_target != UNTRACKED_ID
         # Newborn mask is true where the pq pred is pos in curr but not in prev_mask
@@ -841,20 +845,26 @@ class Sparse4DHead(BaseModule):
             pos_tq_mask = tq_id_target != UNTRACKED_ID
             # tq_tp: tq assigned (!=-1) and it was the same previously tracked obj
             tq_tp_mask = torch.stack([
-                torch.zeros_like(tq_id_target_i, dtype=torch.bool)
-                if prev_instance_inds_i is None else
-                (tq_id_target_i == prev_instance_inds_i) & pos_tq_mask_i
+                torch.stack([
+                    torch.zeros_like(tq_id, dtype=torch.bool)
+                    if len(prev_inds) == 0 else
+                    (tq_id == prev_inds) & mask
+                    for (tq_id, prev_inds, mask) in zip(tq_id_target_i, prev_instance_inds_i, pos_tq_mask_i)
+                ])
                 for (tq_id_target_i, prev_instance_inds_i, pos_tq_mask_i)
-                in zip(tq_id_target, prev_instance_inds, pos_tq_mask)
+                in zip(tq_id_target, prev_instance_inds_list, pos_tq_mask)
             ])
             tq_tp = tq_tp_mask.sum()
 
             tq_match_mask = torch.stack([
-                torch.ones_like(tq_id_target_i, dtype=torch.bool) 
-                if prev_instance_inds_i is None else
-                tq_id_target_i == prev_instance_inds_i  # tq_id_target_i matches prev_instance_inds_i
+                torch.stack([
+                    torch.ones_like(tq_id_target_i[0], dtype=torch.bool) 
+                    if len(inds) == 0 else
+                    tgt == inds  # tq_id_target_i matches prev_instance_inds_i
+                    for tgt, inds in zip(tq_id_target_i, prev_instance_inds_i)
+                ]) # iterate over groups
                 for (tq_id_target_i, prev_instance_inds_i)
-                in zip(tq_id_target, prev_instance_inds) # iterate over batch
+                in zip(tq_id_target, prev_instance_inds_list) # iterate over batch
             ])
             # tq_fp: tq assigned (!=UNTRACKED_ID) and it was a different gt
             # handle the case of prev_instance_ind[i] being none
@@ -862,11 +872,14 @@ class Sparse4DHead(BaseModule):
             tq_fp = tq_fp_mask.sum()
 
             carryover_mask = torch.stack([
-                torch.zeros_like(tq_id_target_i, dtype=torch.bool)
-                if prev_instance_inds_i is None else
-                torch.isin(prev_instance_inds_i, gt_id_i) # object was in prev frame and is in current frame
-                for (tq_id_target_i, prev_instance_inds_i, gt_id_i)
-                in zip(tq_id_target, prev_instance_inds, gt_id) # iterate over samples in batch
+                torch.stack([
+                    torch.zeros_like(tq_id_target[0, 0], dtype=torch.bool) # (num_group, num_tq)
+                    if len(prev_inds) == 0 else
+                    torch.isin(prev_inds, gt_id_i) # object was in prev frame and is in current frame
+                    for prev_inds in prev_instance_inds_i
+                ]) # iterate over groups
+                for (prev_instance_inds_i, gt_id_i)
+                in zip(prev_instance_inds_list, gt_id) # iterate over samples in batch
             ])
             # tq_fn: prev_inst is in curr frame but corresponding query is not a tp
             tq_fn_mask = carryover_mask & ~tq_tp_mask

@@ -1,5 +1,5 @@
 import copy
-from typing import List
+from typing import List, Optional, Union
 
 import numpy as np
 import torch
@@ -29,7 +29,6 @@ def topk(confidence, k, *inputs):
 
     group_indices = torch.arange(
         num_groups, device=indices.device).view(1, -1, 1).expand(bs, -1, k)
-    # check how selected_elements is generated
 
     outputs = []
     for input_i in inputs:
@@ -38,6 +37,20 @@ def topk(confidence, k, *inputs):
         outputs.append(selected_elements)
     return confidence, outputs, indices  # Return indices as well
 
+def topk_single(confidence, k, *inputs):
+    """Ungrouped variation of the topk function"""
+    bs, N = confidence.shape
+    confidence, indices = torch.topk(confidence, k, dim=1)
+    # create batch index tensor, (bs, k) to match shape of indices
+    batch_indices = torch.arange(
+        bs, device=indices.device).view(-1, 1).expand(-1, k)
+
+    outputs = []
+    for input_i in inputs:
+        # (bs, k, ...)
+        selected_elements = input_i[batch_indices, indices]
+        outputs.append(selected_elements)
+    return confidence, outputs, indices  # Return indices as well
 
 @MODELS.register_module()
 class InstanceBank(nn.Module):
@@ -57,6 +70,7 @@ class InstanceBank(nn.Module):
         # TRAILAB params
         num_learned_groups: int = 1,
         num_learned_temp_groups: int = 1,
+        group_selection: Optional[List[Union[str, float]]] = None,
         # FocalFormer3D heatmap init params
         heatmap_init: bool = False,
         num_heatmap_stages: int = 1,
@@ -64,6 +78,7 @@ class InstanceBank(nn.Module):
         point_cloud_range: List[float] = [-54.0, -54.0, -5.0, 54.0, 54.0, 3.0],
         nms_kernel_size: int = 3,
         feat_pool: bool = True,
+        dup_pq_groups: bool = True,
         num_bbox_pool_points: int = 7,
         dataset_name:str='NuScenesTrackingDataset',
     ):
@@ -104,15 +119,39 @@ class InstanceBank(nn.Module):
                 requires_grad=anchor_grad,
             )
             self.anchor_init = anchor
-            self.instance_feature = nn.Parameter(
-                torch.zeros(
-                    [num_learned_groups, self.anchor.shape[0], self.embed_dims]),
-                requires_grad=feat_grad,
-            )
+            self.dup_pq_groups = dup_pq_groups
+            if dup_pq_groups:
+                self.instance_feature = nn.Parameter(
+                    torch.zeros(
+                        [1, self.anchor.shape[0], self.embed_dims]),
+                    requires_grad=feat_grad,
+                )
+            else:
+                self.instance_feature = nn.Parameter(
+                    torch.zeros(
+                        [num_learned_groups, self.anchor.shape[0], self.embed_dims]),
+                    requires_grad=feat_grad,
+                )
         else:
             self.instance_feature = None
+        assert num_learned_groups >= num_learned_temp_groups, (
+            f"num_learned_groups {num_learned_groups} must be greater than or equal to num_learned_temp_groups {num_learned_temp_groups}"
+        )
         self.num_learned_groups = num_learned_groups
         self.num_learned_temp_groups = num_learned_temp_groups
+        if group_selection is None:
+            group_selection = ["topk"] + ["random"] * (self.num_learned_groups - 1)
+
+        assert len(group_selection) == self.num_learned_groups, (
+            f"Group selection {group_selection} must have length {self.num_learned_groups}"
+        )
+        # TODO add more group selection options
+        supported_group_selection = ['random', 'topk']
+        assert all(
+            [x in supported_group_selection or (isinstance(x, float) and 0 <= x <= 1) for x in group_selection]
+        ), f"All entries in group_selection must be in {supported_group_selection} or a float between 0 and 1"
+        assert group_selection[0] == 'topk', "First group selection must be 'topk'."
+        self.group_selection = group_selection
         self.reset()
 
         # FocalFormer3D heatmap init params
@@ -220,9 +259,14 @@ class InstanceBank(nn.Module):
 
     def get_pq_learned(self, batch_size, multiscale_lidar_feats):
         if self.training:
-            instance_feature = torch.tile(
-                self.instance_feature[None], (batch_size, 1, 1, 1)
-            )  # (bs, num_groups, num_anchor, embed_dims)
+            if self.dup_pq_groups:
+                instance_feature = torch.tile(
+                    self.instance_feature[None, 0:1], (batch_size, self.num_learned_groups, 1, 1)
+                )  # (bs, num_groups, num_anchor, embed_dims)
+            else:
+                instance_feature = torch.tile(
+                    self.instance_feature[None], (batch_size, 1, 1, 1)
+                )  # (bs, num_groups, num_anchor, embed_dims)
             anchor = torch.tile(
                 self.anchor[None], (batch_size, self.num_learned_groups, 1, 1))
         else:
@@ -544,6 +588,9 @@ class InstanceBank(nn.Module):
                 time_interval,
                 time_interval.new_tensor(self.default_time_interval),
             )
+
+            # duplicate self.mask across the group dim
+            self.mask = self.mask[:, None].repeat(1, instance_feature.shape[1])
         else:
             self.reset()
             time_interval = instance_feature.new_tensor(
@@ -563,6 +610,18 @@ class InstanceBank(nn.Module):
             # no cached instances or different number of groups (training to inference)
             # TODO handle the inference case more elegantly
             return instance_feature, anchor
+        
+        if self.num_learned_temp_groups <= 0:
+            # no learned temp groups, no updating with TQ
+            return instance_feature, anchor
+
+        # keep first group as temporal always
+        temp_group_mask = torch.zeros(instance_feature.shape[1], dtype=torch.bool, device=self.mask.device)
+        temp_group_mask[0] = True
+        temp_group_mask[1:] = torch.randperm(
+            instance_feature.shape[1] - 1) < (self.num_learned_temp_groups - 1)
+        # mask for updating with TQ]
+        self.mask = self.mask & temp_group_mask[None, :]
 
         num_dn = instance_feature.shape[2] - self.num_anchor
         if num_dn > 0:
@@ -583,24 +642,24 @@ class InstanceBank(nn.Module):
         # concatenate with cached queries (TQ)
         selected_feature = torch.cat(
             [self.cached_feature, selected_feature], dim=2
-        )
+        )  # (bs, num_groups, num_anchor, embed_dims)
         selected_anchor = torch.cat(
             [self.cached_anchor, selected_anchor], dim=2
-        )
+        )  # (bs, num_groups, num_anchor, anchor_size)
         # mask determines which items in the batch should be updated with selected_feature.
         # otherwise, if mask is False, the item should be updated with the original feature.
         instance_feature = torch.where(
-            self.mask[:, None, None, None], selected_feature, instance_feature
+            self.mask[:, :, None, None], selected_feature, instance_feature
         )
         anchor = torch.where(
-            self.mask[:, None, None, None], selected_anchor, anchor)
+            self.mask[:, :, None, None], selected_anchor, anchor)
 
         # update instance_inds with new instances
         if self.instance_inds_inference is not None:
             # wipe the stored memory based on self.mask (determined by difference in timestamp)
             self.instance_inds_inference = torch.where(
-                self.mask[:, None, None],
-                self.instance_inds_inference,
+                self.mask[:, :, None],
+                self.instance_inds_inference, # (bs, num_groups, num_anchor)
                 self.instance_inds_inference.new_tensor(UNTRACKED_ID),
             )
 
@@ -638,11 +697,41 @@ class InstanceBank(nn.Module):
             )
 
         # self.cached_confidence used to perform confidence decay in the next step
-        (
-            self.cached_confidence,
-            (self.cached_feature, self.cached_anchor),
-            self.cached_indices,
-        ) = topk(confidence, self.num_temp_instances, instance_feature, anchor)
+        cached_confidence, cached_feature, cached_anchor, cached_indices = [], [], [], []
+        for selection_method, conf_i, inst_feat_i, anchor_i in zip(
+            self.group_selection, confidence.unbind(1), instance_feature.unbind(1), anchor.unbind(1)
+        ):
+            if selection_method == "topk":
+                # Select the topk instances based on confidence
+                conf_i_selected, (inst_feat_i_selected, anchor_i_selected), indices_selected = topk_single(
+                    conf_i, self.num_temp_instances, inst_feat_i, anchor_i
+                )
+            elif selection_method == "random":
+                # Randomly select num_temp_instances instances to be passed
+                indices_selected = torch.randperm(
+                    conf_i.shape[-1], device=conf_i.device)[: self.num_temp_instances]
+                conf_i_selected = conf_i[:, indices_selected]
+                inst_feat_i_selected = inst_feat_i[:, indices_selected]
+                anchor_i_selected = anchor_i[:, indices_selected]
+                indices_selected = indices_selected.unsqueeze(0).expand(
+                    conf_i.shape[0], -1) # (bs, num_temp_instances)
+            elif isinstance(selection_method, float):
+                raise NotImplementedError(
+                    "Random selection method not implemented. Need to know which instances are assigned"
+                )
+            else:
+                raise NotImplementedError(
+                    f"Group selection method {selection_method} not implemented"
+                )
+            cached_confidence.append(conf_i_selected)
+            cached_feature.append(inst_feat_i_selected)
+            cached_anchor.append(anchor_i_selected)
+            cached_indices.append(indices_selected)
+        self.cached_confidence = torch.stack(cached_confidence, dim=1)
+        self.cached_feature = torch.stack(cached_feature, dim=1)
+        self.cached_anchor = torch.stack(cached_anchor, dim=1)
+        self.cached_indices = torch.stack(cached_indices, dim=1)
+
         if self.num_temp_instances > 0 and instance_inds is not None:
             # update and cache instance_inds for the next frame
             # only used at inference time
