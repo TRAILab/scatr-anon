@@ -27,6 +27,7 @@ class SparseBox3DEncoder(BaseModule):
         output_fc=True,
         in_loops=1,
         out_loops=2,
+        output_dim=None
     ):
         super().__init__()
         assert mode in ["add", "cat"]
@@ -44,10 +45,14 @@ class SparseBox3DEncoder(BaseModule):
         self.pos_fc = embedding_layer(3, embed_dims[0])
         self.size_fc = embedding_layer(3, embed_dims[1])
         self.yaw_fc = embedding_layer(2, embed_dims[2])
+        final_dims = sum(embed_dims[:3])
         if vel_dims > 0:
             self.vel_fc = embedding_layer(self.vel_dims, embed_dims[3])
+            final_dims += embed_dims[3]
         if output_fc:
-            self.output_fc = embedding_layer(embed_dims[-1], embed_dims[-1])
+            input_dim = final_dims if mode == "cat" else embed_dims[-1]
+            output_dim = output_dim if output_dim is not None else embed_dims[-1]
+            self.output_fc = embedding_layer(input_dim, output_dim)
         else:
             self.output_fc = None
 
