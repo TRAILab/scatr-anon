@@ -12,16 +12,16 @@ log_level = "INFO"
 batch_size = 6
 num_gpus = 8
 total_batch_size = batch_size * num_gpus
-num_epochs = 17
+num_epochs = 20
 checkpoint_epoch_interval = 1
-val_epoch_interval = 2
+val_epoch_interval = 1
 
-short_name = "lidar-simple-split_cbgs"
+short_name = "lidar-8g-v1-900q-yespool-cyclic"
 work_dir = f"work_dirs/sparse4dv3-temporal_lidar_1x{num_gpus}_bs{batch_size}-{num_epochs}e_{short_name}"
 
 load_from = 'ckpts/focalformer3d_converted/DeformFormer3D_L_iterimg_ep20_mAP655_NDS707.pth'
-# resume_from = 'work_dirs/sparse4dv3-temporal_lidar_1x8_bs6-12e_lidar-group/epoch_4.pth'
-# resume=True
+# load_from = 'work_dirs/sparse4dv3-temporal_lidar_1x8_bs6-20e_lidar-8g-300q-baseline-900q-nopool-cyclic/epoch_19.pth'
+# resume = True
 
 class_names = [
     "car",
@@ -54,11 +54,14 @@ model = dict(
         point_cloud_range=point_cloud_range,
         instance_bank=dict(
             class_names=class_names,
-            num_anchor=300,
-            anchor="_nuscenes_kmeans300.npy",
-            num_temp_instances=200,
+            num_anchor=900,
+            anchor="_nuscenes_kmeans900.npy",
+            num_temp_instances=600,
             dataset_name={{_base_.dataset_type}},
             feat_pool=True,
+            num_learned_groups=2,
+            num_learned_temp_groups=2,
+            group_selection=["topk", "random"],
         ),
         anchor_encoder=dict(
             output_fc=True,
@@ -119,51 +122,51 @@ optim_wrapper = dict(
     ),
 )
 
-param_scheduler = [
-    dict(
-        type="LinearLR",
-        start_factor=1.0/3,
-        by_epoch=False,
-        begin=0,
-        end=500
-    ),
-    dict(
-        type="CosineAnnealingLR",
-        by_epoch=True,
-        eta_min=lr * 1e-3,
-        convert_to_iter_based=True,
-    )]
 # param_scheduler = [
 #     dict(
-#         type='OneCycleLR',
-#         eta_max=lr,
-#         total_steps=num_epochs,
-#         pct_start=0.4,
-#         div_factor=25.0,
-#         final_div_factor=1e4,
-#         by_epoch=True,
-#         convert_to_iter_based=True
-#     ),
-#     # momentum scheduler
-#     # During the first 8 epochs, momentum increases from 0 to 0.85 / 0.95
-#     # during the next 12 epochs, momentum increases from 0.85 / 0.95 to 1
-#     dict(
-#         type="CosineAnnealingMomentum",
-#         T_max=(0.4 * num_epochs),
-#         eta_min=0.85 / 0.95,
+#         type="LinearLR",
+#         start_factor=1.0/3,
+#         by_epoch=False,
 #         begin=0,
-#         end=(0.4 * num_epochs),
-#         by_epoch=True,
-#         convert_to_iter_based=True),
+#         end=500
+#     ),
 #     dict(
-#         type="CosineAnnealingMomentum",
-#         T_max=12,
-#         eta_min=1,
-#         begin=(0.4 * num_epochs),
-#         end=num_epochs,
+#         type="CosineAnnealingLR",
 #         by_epoch=True,
-#         convert_to_iter_based=True)
-# ]
+#         eta_min=lr * 1e-3,
+#         convert_to_iter_based=True,
+#     )]
+param_scheduler = [
+    dict(
+        type='OneCycleLR',
+        eta_max=lr,
+        total_steps=num_epochs,
+        pct_start=0.4,
+        div_factor=25.0,
+        final_div_factor=1e4,
+        by_epoch=True,
+        convert_to_iter_based=True
+    ),
+    # momentum scheduler
+    # During the first 8 epochs, momentum increases from 0 to 0.85 / 0.95
+    # during the next 12 epochs, momentum increases from 0.85 / 0.95 to 1
+    dict(
+        type="CosineAnnealingMomentum",
+        T_max=(0.4 * num_epochs),
+        eta_min=0.85 / 0.95,
+        begin=0,
+        end=(0.4 * num_epochs),
+        by_epoch=True,
+        convert_to_iter_based=True),
+    dict(
+        type="CosineAnnealingMomentum",
+        T_max=12,
+        eta_min=1,
+        begin=(0.4 * num_epochs),
+        end=num_epochs,
+        by_epoch=True,
+        convert_to_iter_based=True)
+]
 
 # runtime settings
 train_cfg = dict(
@@ -179,7 +182,7 @@ default_hooks = dict(
     logger=dict(interval=50)
 )
 
-disable_ts_ratio = 0.6
+disable_ts_ratio = 0.75
 custom_hooks = [
     dict(
         type="DisableTrackSampleHook",
