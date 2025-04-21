@@ -403,8 +403,6 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
     ):
         if self.num_dn_groups <= 0:
             return None
-        if self.num_temp_dn_groups <= 0:
-            gt_instance_inds = None
 
         trimmed_cls_target = []
         trimmed_box_target = []

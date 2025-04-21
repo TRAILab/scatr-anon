@@ -16,7 +16,7 @@ from ..utils.encoder_utils import I2P, LocalContextAttentionBlock
 
 class FocalEncoderLayer(nn.Module):
     def __init__(self, hidden_channel, iterbev='bevfusion', max_points_height=5, iterbev_wo_img=False, 
-            multiscale_outputs=False, layer_id=None, iter_bev_cam=None, need_projbev=True):
+            multiscale_outputs=False, layer_id=None, iter_bev_cam=None, need_projbev=True, final_layer:bool=False):
         super(FocalEncoderLayer, self ).__init__()
 
         self.iterbev = iterbev
@@ -24,6 +24,7 @@ class FocalEncoderLayer(nn.Module):
         self.multiscale_outputs = multiscale_outputs
         self.layer_id = layer_id
         self.iter_bev_cam = iter_bev_cam
+        self.final_layer = final_layer
 
         self.need_projbev = need_projbev
         if self.iterbev in ['bevfusion', 'bevfusionmb2']:
@@ -62,13 +63,12 @@ class FocalEncoderLayer(nn.Module):
                 act_cfg=None
             )
 
-        if self.iterbev_wo_img:
+        if self.iterbev_wo_img or self.final_layer:
             self.iterimg_conv = None
         else:
             self.iterimg_conv = nn.Sequential(
                 resnet.BasicBlock(hidden_channel, hidden_channel, norm_layer=nn.BatchNorm2d),
             )
-        
     def forward(self, img_feat, lidar_feat, img_metas, extra_args=None):
         batch_size = lidar_feat.shape[0]
         if not self.iterbev_wo_img:
@@ -167,9 +167,17 @@ class FocalEncoder(nn.Module):
         self.fusion_blocks = nn.ModuleList()
         for i in range(self.num_layers):
             self.fusion_blocks.append(
-                FocalEncoderLayer(hidden_channel, iterbev=iterbev, 
-                    max_points_height=max_points_height, iterbev_wo_img=self.iterbev_wo_img, 
-                    multiscale_outputs=False, layer_id=i, iter_bev_cam=iter_bev_cam, need_projbev=not cam_lss),
+                FocalEncoderLayer(
+                    hidden_channel, 
+                    iterbev=iterbev, 
+                    max_points_height=max_points_height, 
+                    iterbev_wo_img=self.iterbev_wo_img, 
+                    multiscale_outputs=False, 
+                    layer_id=i, 
+                    iter_bev_cam=iter_bev_cam, 
+                    need_projbev=not cam_lss,
+                    final_layer=(i == num_layers - 1),
+                ),
             )
 
         self.extra_feat = extra_feat
