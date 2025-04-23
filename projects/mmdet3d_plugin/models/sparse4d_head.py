@@ -485,11 +485,7 @@ class Sparse4DHead(BaseModule):
                     anchor,
                     anchor_embed,
                     time_interval=time_interval,
-                    return_cls=(
-                        self.training
-                        or len(prediction) == self.num_single_frame_decoder - 1
-                        or i == len(self.operation_order) - 1
-                    ),
+                    return_cls=True
                 )
                 prediction.append(anchor)
                 classification.append(cls)

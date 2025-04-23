@@ -112,6 +112,33 @@ train_pipeline = [
     ),
 ]
 
+# pass targets during val to compute losses/metrics
+val_pipeline = [
+    points_loader,
+    dict(
+        type='LoadPointsFromMultiSweeps',
+        sweeps_num=10,
+        use_dim=[0, 1, 2, 3, 4],
+    ),
+    dict(
+        type='TrackLoadAnnotations3D',
+        with_bbox_3d=True,
+        with_label_3d=True,
+        with_attr_label=False,
+        with_forecasting=False),
+    dict(
+        type="Pack3DTrackInputs",
+        keys=[
+            "points",
+            "gt_bboxes_3d",
+            "gt_labels_3d",
+            "instance_inds",
+        ],
+        meta_keys=["lidar2global", "timestamp", "lidar2img",
+                   "sample_idx", "scene_token", "lidar_path", "img_path", "num_pts_feats"],
+    ),
+]
+
 test_pipeline = [
     points_loader,
     dict(
@@ -212,12 +239,17 @@ val_dataloader = dict(
     dataset=dict(
         **data_basic_config,
         ann_file=val_pkl_path,
-        pipeline=test_pipeline,
+        pipeline=val_pipeline,
         data_aug_conf=data_aug_conf_eval,
-        test_mode=True,
+        test_mode=False,
+        verbose=True,
+        filter_empty_gt=False,
     )
 )
+
 test_dataloader = val_dataloader
+# test_dataloader['dataset']['pipeline'] = test_pipeline
+# test_dataloader['dataset']['test_mode'] = True
 
 val_evaluator = dict(
     type='NuScenesTrackingMetric',

@@ -7,6 +7,7 @@ import torch
 from mmdet3d.models.detectors.mvx_two_stage import MVXTwoStageDetector
 from mmdet3d.registry import MODELS
 from mmdet3d.structures import Det3DDataSample
+from mmengine.structures import BaseDataElement
 from torch import Tensor, nn
 
 from .grid_mask import GridMask
@@ -17,8 +18,8 @@ try:
 except:
     DAF_VALID = False
 
-from projects.mmdet3d_plugin.utils.misc import (hash_array,  # debug tools
-                                                hash_tensor)
+from projects.mmdet3d_plugin.utils.misc import hash_array  # debug tools
+from projects.mmdet3d_plugin.utils.misc import hash_tensor
 
 __all__ = ["Sparse4D"]
 
@@ -69,9 +70,11 @@ class Sparse4D(MVXTwoStageDetector):
                 for param in self.img_neck.parameters():
                     param.requires_grad = False
             # Fix bn, from focalformer3d
+
             def fix_bn(m):
                 if isinstance(m, nn.BatchNorm1d) or isinstance(m, nn.BatchNorm2d):
                     m.track_running_stats = False
+
             self.pts_voxel_encoder.apply(fix_bn)
             self.pts_middle_encoder.apply(fix_bn)
             self.pts_backbone.apply(fix_bn)
@@ -142,7 +145,7 @@ class Sparse4D(MVXTwoStageDetector):
             pts_feats = [None]
 
         # TODO check output of new_pts_feat against focalformer, need the same torch/cuda version for reproducibility
-        # breakpoint() 
+        # breakpoint()
         if self.with_pts_fusion_layer:
             new_img_feat, new_pts_feat = self.pts_fusion_layer(
                 feature_maps[0], pts_feats[0], batch_input_metas)
@@ -165,7 +168,7 @@ class Sparse4D(MVXTwoStageDetector):
         # timestamp needs to be type double to avoid quantization errors
         timestamp = torch.tensor([bs.metainfo["timestamp"]
                                  for bs in batch_data_samples], dtype=torch.float64)
-        
+
         # handle camera-specific data
         if 'lidar2img' in batch_inputs_dict:
             lidar2img = batch_inputs_dict['lidar2img'].to(torch.float32)
@@ -176,7 +179,7 @@ class Sparse4D(MVXTwoStageDetector):
             image_wh = batch_inputs_dict['img_shape'][..., [1, 0]]
         else:
             image_wh = None
-        
+
         model_outs = self.pts_bbox_head(
             new_pts_feat,
             new_img_feat,
@@ -192,7 +195,7 @@ class Sparse4D(MVXTwoStageDetector):
             gt_depth = [
                 torch.from_numpy(
                     np.stack([depth.metainfo["gt_depth"][i]
-                            for depth in batch_data_samples])
+                              for depth in batch_data_samples])
                 ).to(device=new_img_feat[0].device)
                 for i in range(len(batch_data_samples[0].metainfo["gt_depth"]))
             ]
@@ -222,7 +225,7 @@ class Sparse4D(MVXTwoStageDetector):
             image_wh = batch_inputs_dict['img_shape'][..., [1, 0]]
         else:
             image_wh = None
-        
+
         model_outs = self.pts_bbox_head(
             new_pts_feat,
             new_img_feat,
@@ -231,10 +234,28 @@ class Sparse4D(MVXTwoStageDetector):
             image_wh=image_wh,
             batch_data_samples=batch_data_samples,
         )
+
+        # compute val losses
+        loss_dict = self.pts_bbox_head.loss(model_outs, batch_data_samples)
+        loss_dict = {"val_" + k: v for k, v in loss_dict.items()}
+        if depths is not None:
+            gt_depth = [
+                torch.from_numpy(
+                    np.stack([depth.metainfo["gt_depth"][i]
+                              for depth in batch_data_samples])
+                ).to(device=new_img_feat[0].device)
+                for i in range(len(batch_data_samples[0].metainfo["gt_depth"]))
+            ]
+            loss_dict["val_loss_dense_depth"] = self.depth_branch.loss(
+                depths, gt_depth
+            )
+
         results = self.pts_bbox_head.post_process(model_outs)
         output = self.add_pred_to_datasample(
             batch_data_samples, data_instances_3d=results
         )
+
+        output.append(BaseDataElement(loss=loss_dict))  # add loss dict to output
         return output
 
     @property
