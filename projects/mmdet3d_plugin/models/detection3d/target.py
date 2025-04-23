@@ -814,12 +814,12 @@ class SparseBox3DTarget(BaseTargetWithDenoising):
             # (num gt, bbox size)
             gt_weights = torch.where(
                 (gt_labels_3d == class_label)[:, None],  # (num gt, 1)
-                gt_weights.new_tensor(weight),
+                weight.to(gt_weights.device),
                 gt_weights,
             )
 
         if len(gt_bboxes_3d) == 0:
-            return heatmap_target, heatmap_bbox_target
+            return heatmap_target, heatmap_bbox_target, reg_weights
 
         # compute assignment cost
         cost = self._box_cost_group(
