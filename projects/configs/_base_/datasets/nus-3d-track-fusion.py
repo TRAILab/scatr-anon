@@ -31,8 +31,8 @@ train_pipeline = [
         with_forecasting=False),
     # augmentations, kwargs in data_aug_conf
     # dict(type='TrackSample', db_sampler=db_sampler),  # no TrackSample in Fusion
-    # dict(type='SeqGlobalRotScaleTrans'),
-    # dict(type='SeqRandomFlip3D', sync_2d=False, flip_img=False),
+    dict(type='SeqGlobalRotScaleTrans'),
+    dict(type='SeqRandomFlip3D', sync_2d=False, flip_img=False),
     dict(type='PointShuffle'),
     # dict(type="PhotoMetricDistortionMultiViewImage"),
     dict(
@@ -102,20 +102,23 @@ test_pipeline = [
 
 data_aug_conf = dict(
     # lidar aug params
-    # rot_range_lidar=[-0.3925 * 2, 0.3925 * 2],
-    # scale_ratio_range_lidar=[0.9, 1.1],
-    # translation_std_lidar=[0.5, 0.5, 0.5],
-    # flip_ratio_bev_horizontal=0.5,
-    # flip_ratio_bev_vertical=0.5,
-    # use_track_sample_3d=False,
-    # # img resize params
-    # W=1600,
-    # H=900,
-    # final_dim=image_size,
-    # # ImageAug3D params
-    # resize_lim=[0.4, 0.6],
-    # rot_lim=[-5.4, 5.4],
-    # rand_img_flip=True,
+    rot_range_lidar=[-0.3925 * 2, 0.3925 * 2],
+    scale_ratio_range_lidar=[0.9, 1.1],
+    translation_std_lidar=[0.5, 0.5, 0.5],
+    flip_ratio_bev_horizontal=0.5,
+    flip_ratio_bev_vertical=0.5,
+    use_track_sample_3d=False,
+    # img resize params
+    W=1600,
+    H=900,
+    final_dim=image_size,
+    # ImageAug3D params
+    resize_lim=[0.4, 0.6],
+    rot_lim=[-5.4, 5.4],
+    rand_img_flip=True,
+)
+
+data_aug_conf_test = dict(
     # lidar aug params
     rot_range_lidar=[0,0],
     scale_ratio_range_lidar=[1, 1],
@@ -130,8 +133,9 @@ data_aug_conf = dict(
     # ImageAug3D params
     resize_lim=[0.5, 0.5],
     rot_lim=[0, 0],
-    rand_img_flip=True,
+    rand_img_flip=False,
 )
+
 
 train_dataloader = dict(
     dataset=dict(
@@ -143,14 +147,10 @@ train_dataloader = dict(
 
 val_dataloader = dict(
     dataset=dict(
+        data_aug_conf=data_aug_conf_test,
         pipeline=test_pipeline,
         modality=input_modality
     )
 )
 
-test_dataloader = dict(
-    dataset=dict(
-        pipeline=test_pipeline,
-        modality=input_modality
-    )
-)
+test_dataloader = val_dataloader
