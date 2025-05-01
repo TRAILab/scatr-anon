@@ -75,7 +75,8 @@ train_pipeline = [
     ),
 ]
 
-test_pipeline = [
+# pass targets during val to compute losses/metrics
+val_pipeline = [
     points_loader,
     dict(
         type='LoadPointsFromMultiSweeps',
@@ -93,12 +94,25 @@ test_pipeline = [
         rand_flip=False,
         is_train=False),
     dict(
+        type='TrackLoadAnnotations3D',
+        with_bbox_3d=True,
+        with_label_3d=True,
+        with_attr_label=False,
+        with_forecasting=False),
+    dict(
         type="Pack3DTrackInputs",
-        keys=["points", "img"],
+        keys=[
+            "points",
+            "img",
+            "gt_bboxes_3d",
+            "gt_labels_3d",
+            "instance_inds",
+        ],
         meta_keys=["lidar2global", "timestamp", "lidar2img",
                    "sample_idx", "scene_token", "lidar_path", "img_path", "num_pts_feats"],
     ),
 ]
+
 
 data_aug_conf = dict(
     # lidar aug params
@@ -148,7 +162,7 @@ train_dataloader = dict(
 val_dataloader = dict(
     dataset=dict(
         data_aug_conf=data_aug_conf_test,
-        pipeline=test_pipeline,
+        pipeline=val_pipeline,
         modality=input_modality
     )
 )
