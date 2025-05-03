@@ -16,7 +16,8 @@ num_epochs = 20
 checkpoint_epoch_interval = 1
 val_epoch_interval = 1
 
-short_name = "lidar-8g-v1-900q-yespool-cyclic"
+short_name = "lidar-8g-v1-900q-yespool"
+init_pq_with_heatmap = False
 work_dir = f"work_dirs/sparse4dv3-temporal_lidar_1x{num_gpus}_bs{batch_size}-{num_epochs}e_{short_name}"
 
 load_from = 'ckpts/focalformer3d_converted/DeformFormer3D_L_iterimg_ep20_mAP655_NDS707.pth'
@@ -50,6 +51,9 @@ model = dict(
             point_cloud_range=point_cloud_range,
         )
     ),
+    pts_fusion_layer=dict(
+        extra_feat=init_pq_with_heatmap,
+    ),
     pts_bbox_head=dict(
         point_cloud_range=point_cloud_range,
         instance_bank=dict(
@@ -62,6 +66,7 @@ model = dict(
             num_learned_groups=2,
             num_learned_temp_groups=2,
             group_selection=["topk", "random"],
+            heatmap_init=init_pq_with_heatmap,
         ),
         anchor_encoder=dict(
             output_fc=True,

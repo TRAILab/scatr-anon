@@ -1,5 +1,5 @@
 use_deformable_func = True
-embed_dims = 128
+embed_dims = 256
 num_heads = 8
 num_learned_groups = 2
 num_learned_temp_groups = 2

@@ -33,6 +33,7 @@ class Sparse4D(MVXTwoStageDetector):
         depth_branch: Optional[Dict] = None,
         freeze_pts: bool = True,
         freeze_img: bool = True,
+        freeze_camlss: bool = True,
         freeze_fusion: bool = False,
         **kwargs
     ):
@@ -61,6 +62,15 @@ class Sparse4D(MVXTwoStageDetector):
             for param in self.pts_neck.parameters():
                 param.requires_grad = False
 
+            # Fix bn, from focalformer3d
+            def fix_bn(m):
+                if isinstance(m, nn.BatchNorm1d) or isinstance(m, nn.BatchNorm2d):
+                    m.track_running_stats = False
+            self.pts_voxel_encoder.apply(fix_bn)
+            self.pts_middle_encoder.apply(fix_bn)
+            self.pts_backbone.apply(fix_bn)
+            self.pts_neck.apply(fix_bn)
+
         if freeze_img and self.with_img_backbone:
             self.img_backbone.eval()
             for param in self.img_backbone.parameters():
@@ -69,16 +79,11 @@ class Sparse4D(MVXTwoStageDetector):
                 self.img_neck.eval()
                 for param in self.img_neck.parameters():
                     param.requires_grad = False
-            # Fix bn, from focalformer3d
+            if freeze_camlss and hasattr(self.pts_fusion_layer, 'cam_lss'):
+                self.pts_fusion_layer.cam_lss.eval()
+                for param in self.pts_fusion_layer.cam_lss.parameters():
+                    param.requires_grad = False
 
-            def fix_bn(m):
-                if isinstance(m, nn.BatchNorm1d) or isinstance(m, nn.BatchNorm2d):
-                    m.track_running_stats = False
-
-            self.pts_voxel_encoder.apply(fix_bn)
-            self.pts_middle_encoder.apply(fix_bn)
-            self.pts_backbone.apply(fix_bn)
-            self.pts_neck.apply(fix_bn)
         if freeze_fusion and self.with_pts_fusion_layer:
             self.pts_fusion_layer.eval()
             for param in self.pts_fusion_layer.parameters():
@@ -255,7 +260,8 @@ class Sparse4D(MVXTwoStageDetector):
             batch_data_samples, data_instances_3d=results
         )
 
-        output.append(BaseDataElement(loss=loss_dict))  # add loss dict to output
+        # add loss dict to output
+        output.append(BaseDataElement(loss=loss_dict))
         return output
 
     @property
