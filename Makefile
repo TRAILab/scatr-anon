@@ -17,6 +17,9 @@ DOCKER_OPTS = \
 	-e DISPLAY=${DISPLAY} \
 	-e WANDB_API_KEY=${WANDB_API_KEY} \
 	-e CUBLAS_WORKSPACE_CONFIG=:4096:8 \
+	-e NCCL_ASYNC_ERROR_HANDLING=1 \
+	-e NCCL_DEBUG=INFO \
+	-e NVIDIA_VISIBLE_DEVICES=all \
 	-v /tmp:/tmp \
 	-v /tmp/.X11-unix:/tmp/.X11-unix \
 	-v /mnt/fsx:/mnt/fsx \
