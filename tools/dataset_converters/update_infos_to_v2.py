@@ -368,9 +368,7 @@ def update_nuscenes_infos(pkl_path, out_dir):
                     'instance_inds'][i]
                 empty_instance = clear_instance_unused_keys(empty_instance)
                 temp_data_info['instances'].append(empty_instance)
-            temp_data_info[
-                'cam_instances'] = generate_nuscenes_camera_instances(
-                    ori_info_dict, nusc)
+            temp_data_info['cam_instances'] = ori_info_dict.get('cam_instances', None)
         if 'pts_semantic_mask_path' in ori_info_dict:
             temp_data_info['pts_semantic_mask_path'] = Path(
                 ori_info_dict['pts_semantic_mask_path']).name
