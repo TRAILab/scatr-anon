@@ -1,5 +1,5 @@
 # Base image
-ARG PYTORCH="2.4.1"
+ARG PYTORCH="2.6.0"
 ARG CUDA="12.4"
 ARG CUDNN="9"
 
@@ -8,9 +8,7 @@ FROM pytorch/pytorch:${PYTORCH}-cuda${CUDA}-cudnn${CUDNN}-devel
 ENV TORCH_CUDA_ARCH_LIST="6.0 6.1 7.0+PTX 8.0+PTX 8.6+PTX"
 ENV TORCH_USE_CUDA_DSA=1
 ENV TORCH_NVCC_FLAGS="-Xfatbin -compress-all"
-# ENV CMAKE_PREFIX_PATH="$(dirname $(which conda))/../"
 ENV DEBIAN_FRONTEND=noninteractive
-# set CUBLAS_WORKSPACE_CONFIG=:4096:8 for reproducibility
 ENV CUBLAS_WORKSPACE_CONFIG=:4096:8
 
 # Avoid Public GPG key error
@@ -56,9 +54,6 @@ RUN cat /etc/ssh/ssh_config | grep -v StrictHostKeyChecking > /etc/ssh/ssh_confi
 # RUN pip install --upgrade pip
 
 RUN pip install wandb==0.18.1
-# RUN pip install \
-    # # openmim==0.3.9 \    
-    # wandb==0.18.1
 
 # Install OpenMMLab packages
 ENV FORCE_CUDA="1"
@@ -67,7 +62,11 @@ ENV FORCE_CUDA="1"
 RUN git clone https://github.com/TRAILab/nuscenes-devkit.git && cd nuscenes-devkit && \
     pip install ./setup
 
-# RUN mim install "mmengine==0.10.5" "mmcv==2.1.0" "mmdet==3.2.0" "mmdet3d==1.4.0"
+RUN git clone https://github.com/facebookresearch/sam2.git && cd sam2 && \
+    pip install -e . && \
+    cd checkpoints && \
+    ./download_ckpts.sh
+
 RUN pip install "mmengine==0.10.5" "mmcv==2.1.0" "mmdet==3.2.0" "mmdet3d==1.4.0"
 
 # install spconv
