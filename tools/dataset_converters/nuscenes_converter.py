@@ -7,13 +7,15 @@ from typing import List, Tuple, Union
 import mmcv
 import mmengine
 import numpy as np
+import torch
+from mmdet3d.datasets.convert_utils import NuScenesNameMapping
+from mmdet3d.structures import points_cam2img
 from nuscenes.nuscenes import NuScenes
 from nuscenes.utils.geometry_utils import view_points
 from pyquaternion import Quaternion
+from sam2.build_sam import build_sam2
+from sam2.sam2_image_predictor import SAM2ImagePredictor
 from shapely.geometry import MultiPoint, box
-
-from mmdet3d.datasets.convert_utils import NuScenesNameMapping
-from mmdet3d.structures import points_cam2img
 
 nus_categories = ('car', 'truck', 'trailer', 'bus', 'construction_vehicle',
                   'bicycle', 'motorcycle', 'pedestrian', 'traffic_cone',
@@ -147,7 +149,8 @@ def _fill_trainval_infos(nusc,
                          train_scenes,
                          val_scenes,
                          test=False,
-                         max_sweeps=10):
+                         max_sweeps=10,
+                         mask_directory=None):
     """Generate the train/val infos from the raw data.
 
     Args:
@@ -166,7 +169,36 @@ def _fill_trainval_infos(nusc,
     val_nusc_infos = []
 
     frame_idx = 0
+    camera_types = [
+        'CAM_FRONT',
+        'CAM_FRONT_RIGHT',
+        'CAM_FRONT_LEFT',
+        'CAM_BACK',
+        'CAM_BACK_LEFT',
+        'CAM_BACK_RIGHT',
+    ]
+
+    # use SAM2 to generate 2D masks
+    # TODO don't use hard-coded path for checkpoint, cfg
+    sam2_checkpoint = "/workspace/sam2/checkpoints/sam2.1_hiera_large.pt"
+    model_cfg = "configs/sam2.1/sam2.1_hiera_l.yaml"
+    torch.autocast("cuda", dtype=torch.bfloat16).__enter__()
+    # turn on tfloat32 for Ampere GPUs (https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices)
+    if torch.cuda.get_device_properties(0).major >= 8:
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+    sam2_model = build_sam2(model_cfg, sam2_checkpoint, device='cuda')
+    predictor = SAM2ImagePredictor(sam2_model)
+    if mask_directory is None:
+        mask_directory = osp.join(nusc.dataroot, 'masks', nusc.version)
+    if osp.exists(mask_directory):
+        raise FileExistsError(
+            f'Mask path {mask_directory} already exists, please remove it first or use a different path.')
+    os.makedirs(mask_directory, exist_ok=True)
+
     for sample in mmengine.track_iter_progress(nusc.sample):
+        # TODO support parallelization
+        # TODO pull out the code in the for loop into a function
         lidar_token = sample['data']['LIDAR_TOP']
         sd_rec = nusc.get('sample_data', sample['data']['LIDAR_TOP'])
         cs_record = nusc.get('calibrated_sensor',
@@ -204,14 +236,6 @@ def _fill_trainval_infos(nusc,
         e2g_r_mat = Quaternion(e2g_r).rotation_matrix
 
         # obtain 6 image's information per frame
-        camera_types = [
-            'CAM_FRONT',
-            'CAM_FRONT_RIGHT',
-            'CAM_FRONT_LEFT',
-            'CAM_BACK',
-            'CAM_BACK_LEFT',
-            'CAM_BACK_RIGHT',
-        ]
         for cam in camera_types:
             cam_token = sample['data'][cam]
             cam_path, _, cam_intrinsic = nusc.get_sample_data(cam_token)
@@ -233,62 +257,142 @@ def _fill_trainval_infos(nusc,
                 break
         info['sweeps'] = sweeps
         # obtain annotation
-        if not test:
-            annotations = [
-                nusc.get('sample_annotation', token)
-                for token in sample['anns']
-            ]
-            locs = np.array([b.center for b in boxes]).reshape(-1, 3)
-            dims = np.array([b.wlh for b in boxes]).reshape(-1, 3)
-            rots = np.array([b.orientation.yaw_pitch_roll[0]
-                             for b in boxes]).reshape(-1, 1)
-            velocity = np.array(
-                [nusc.box_velocity(token)[:2] for token in sample['anns']])
-            valid_flag = np.array(
-                [(anno['num_lidar_pts'] + anno['num_radar_pts']) > 0
-                 for anno in annotations],
-                dtype=bool).reshape(-1)
-            # convert velo from global to lidar
-            for i in range(len(boxes)):
-                velo = np.array([*velocity[i], 0.0])
-                velo = velo @ np.linalg.inv(e2g_r_mat).T @ np.linalg.inv(
-                    l2e_r_mat).T
-                velocity[i] = velo[:2]
+        if test:
+            if sample['scene_token'] in train_scenes:
+                train_nusc_infos.append(info)
+            else:
+                val_nusc_infos.append(info)
+            continue
 
-            names = [b.name for b in boxes]
-            for i in range(len(names)):
-                if names[i] in NuScenesNameMapping:
-                    names[i] = NuScenesNameMapping[names[i]]
-            names = np.array(names)
-            # update valid now
-            name_in_track = [_a in nus_categories for _a in names]
-            name_in_track = np.array(name_in_track)
-            valid_flag = np.logical_and(valid_flag, name_in_track)
+        # not test, handle annotations
+        annotations = [
+            nusc.get('sample_annotation', token)
+            for token in sample['anns']
+        ]
+        locs = np.array([b.center for b in boxes]).reshape(-1, 3)
+        dims = np.array([b.wlh for b in boxes]).reshape(-1, 3)
+        rots = np.array([b.orientation.yaw_pitch_roll[0]
+                            for b in boxes]).reshape(-1, 1)
+        velocity = np.array(
+            [nusc.box_velocity(token)[:2] for token in sample['anns']])
+        valid_flag = np.array(
+            [(anno['num_lidar_pts'] + anno['num_radar_pts']) > 0
+                for anno in annotations],
+            dtype=bool).reshape(-1)
+        # convert velo from global to lidar
+        for i in range(len(boxes)):
+            velo = np.array([*velocity[i], 0.0])
+            velo = velo @ np.linalg.inv(e2g_r_mat).T @ np.linalg.inv(
+                l2e_r_mat).T
+            velocity[i] = velo[:2]
 
-            # add instance_ids
-            instance_inds = [nusc.getind('instance', ann['instance_token']) for ann in annotations]
-            
-            # we need to convert box size to
-            # the format of our lidar coordinate system
-            # which is x_size, y_size, z_size (corresponding to l, w, h)
-            gt_boxes = np.concatenate([locs, dims[:, [1, 0, 2]], rots], axis=1)
-            assert len(gt_boxes) == len(
-                annotations), f'{len(gt_boxes)}, {len(annotations)}'
-            info['gt_boxes'] = gt_boxes
-            info['gt_names'] = names
-            info['gt_velocity'] = velocity.reshape(-1, 2)
-            info['num_lidar_pts'] = np.array(
-                [a['num_lidar_pts'] for a in annotations])
-            info['num_radar_pts'] = np.array(
-                [a['num_radar_pts'] for a in annotations])
-            info['valid_flag'] = valid_flag
-            info['instance_inds'] = instance_inds
+        names = [b.name for b in boxes]
+        for i in range(len(names)):
+            if names[i] in NuScenesNameMapping:
+                names[i] = NuScenesNameMapping[names[i]]
+        names = np.array(names)
+        # update valid now
+        name_in_track = [_a in nus_categories for _a in names]
+        name_in_track = np.array(name_in_track)
+        valid_flag = np.logical_and(valid_flag, name_in_track)
 
-            if 'lidarseg' in nusc.table_names:
-                info['pts_semantic_mask_path'] = osp.join(
-                    nusc.dataroot,
-                    nusc.get('lidarseg', lidar_token)['filename'])
+        # add instance_ids
+        instance_inds = [nusc.getind('instance', ann['instance_token']) for ann in annotations]
+        
+        # we need to convert box size to
+        # the format of our lidar coordinate system
+        # which is x_size, y_size, z_size (corresponding to l, w, h)
+        gt_boxes = np.concatenate([locs, dims[:, [1, 0, 2]], rots], axis=1)
+        assert len(gt_boxes) == len(
+            annotations), f'{len(gt_boxes)}, {len(annotations)}'
+        info['gt_boxes'] = gt_boxes
+        info['gt_names'] = names
+        info['gt_velocity'] = velocity.reshape(-1, 2)
+        info['num_lidar_pts'] = np.array(
+            [a['num_lidar_pts'] for a in annotations])
+        info['num_radar_pts'] = np.array(
+            [a['num_radar_pts'] for a in annotations])
+        info['valid_flag'] = valid_flag
+        info['instance_inds'] = instance_inds
 
+        if 'lidarseg' in nusc.table_names:
+            info['pts_semantic_mask_path'] = osp.join(
+                nusc.dataroot,
+                nusc.get('lidarseg', lidar_token)['filename'])
+
+        # get camera seg annotations
+        # for each camera view, project 3D labels into cam view
+        ann2d_infos_all = []
+        bboxes = [] # xyxy format
+        imgs = []
+        for cam in camera_types:
+            cam_info = info['cams'][cam]
+            # obtain 2D annotation infos for each camera
+            # ignore visibility 1 (0-40%), only use 2, 3, 4
+            ann_infos = get_2d_boxes(
+                nusc,
+                cam_info['sample_data_token'],
+                visibilities=['2', '3', '4'],
+                mono3d=False)
+            ann2d_infos_all.append(ann_infos)
+            # note len(xyxy) != len(ann_infos), dropped None
+            xyxy = np.array([x['bbox'] for x in ann_infos if x is not None])
+            xyxy = xyxy.reshape(-1, 4)  # (N, 4)
+            if len(xyxy) == 0:
+                bboxes.append(None)
+                continue
+            xyxy[:, 2: ] += xyxy[:, :2]  # convert x1y1wh to xyxy format
+            bboxes.append(xyxy)
+            img = mmcv.imread(cam_info['data_path'], channel_order='rgb')
+            imgs.append(img)
+
+        predictor.set_image_batch(imgs)
+        masks_batch, scores, _ = predictor.predict_batch(
+            None,
+            None,
+            # account for views with 0 bboxes
+            box_batch=[x for x in bboxes if x is not None],
+            multimask_output=False,
+        )
+        # iterate through each camera view
+        for i, (bbox, ann2d_info) in enumerate(zip(bboxes, ann2d_infos_all)):
+            if ann2d_info is None:
+                continue
+            if bbox is None:
+                # no bbox in this camera view
+                continue
+            mask = masks_batch.pop(0)
+            if len(mask.shape) == 4: # (N, 1, H, W)
+                # remove the "top-k mask" dimension
+                mask = mask.squeeze(1)
+            mask_idx = 0
+            # iterate through each obj annotation in the camera view
+            for j, ann in enumerate(ann2d_info):
+                if ann is None:
+                    continue
+                # add the mask to the annotation info
+                x1, y1, w, h = map(np.round, ann['bbox'])
+                x1 = int(x1)
+                y1 = int(y1)
+                w = int(w)
+                h = int(h)
+
+                # Save a crop of the mask about the 2D bbox to a file
+                mask_crop = mask.astype(np.uint8)[mask_idx, y1:y1 + h, x1:x1 + w]
+                if mask_crop.shape[0] == 0 or mask_crop.shape[1] == 0:
+                    # empty crop, skip
+                    mask_idx += 1
+                    continue
+                mask_idx += 1
+
+                imgname = ann['file_name']
+                imgname = osp.splitext(osp.basename(imgname))[0]
+                cat_name = ann['category_name']
+                filename = f'{imgname}_{cat_name}_{i}_{j}_crop_mask.png'
+                crop_filepath = osp.join(mask_directory, filename)
+                mmcv.imwrite(mask_crop, crop_filepath)
+                ann2d_info[j]['mask_crop_path'] = crop_filepath
+        info['cam_instances'] = ann2d_infos_all
         if sample['scene_token'] in train_scenes:
             train_nusc_infos.append(info)
         else:
@@ -501,9 +605,9 @@ def get_2d_boxes(nusc,
         # Skip if the convex hull of the re-projected corners
         # does not intersect the image canvas.
         if final_coords is None:
+            repro_recs.append(None)
             continue
-        else:
-            min_x, min_y, max_x, max_y = final_coords
+        min_x, min_y, max_x, max_y = final_coords
 
         # Generate dictionary record to be included in the .json file.
         repro_rec = generate_record(ann_rec, min_x, min_y, max_x, max_y,
@@ -589,7 +693,7 @@ def post_process_coords(
 
 
 def generate_record(ann_rec: dict, x1: float, y1: float, x2: float, y2: float,
-                    sample_data_token: str, filename: str) -> OrderedDict:
+                    sample_data_token: str, filename: str) -> Union[OrderedDict, None]:
     """Generate one 2D annotation record given various information on top of
     the 2D bounding box coordinates.
 
@@ -615,7 +719,7 @@ def generate_record(ann_rec: dict, x1: float, y1: float, x2: float, y2: float,
     """
     repro_rec = OrderedDict()
     repro_rec['sample_data_token'] = sample_data_token
-    coco_rec = dict()
+    coco_rec = OrderedDict()
 
     relevant_keys = [
         'attribute_tokens',
