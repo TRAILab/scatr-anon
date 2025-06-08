@@ -7,9 +7,10 @@ from mmdet3d.registry import TRANSFORMS
 @TRANSFORMS.register_module()
 class TrackLoadAnnotations3D(LoadAnnotations3D):
 
-    def __init__(self, with_forecasting: bool = False, **kwargs):
+    def __init__(self, with_forecasting: bool = False, num_cams: int = 6, **kwargs):
         super().__init__(**kwargs)
         self.with_forecasting = with_forecasting
+        self.num_cams = num_cams # default is 6 for nuScenes dataset
 
     def _load_track_ids(self, results):
         if not "instance_inds" in results["ann_info"]:
@@ -44,7 +45,11 @@ class TrackLoadAnnotations3D(LoadAnnotations3D):
         gt_mask_pos = []
         # iterate through each instance
         for info in results['instances']:
-            mask_info = info.get('mask_info', None)
+            if 'mask_info' not in info:
+                gt_masks.append([None] * self.num_cams)
+                gt_mask_pos.append([None] * self.num_cams)
+                continue
+            mask_info = info['mask_info']
             mask = [
                 None if (x is None or 'mask_crop_path' not in x) 
                 else mmcv.imread(x['mask_crop_path'])
