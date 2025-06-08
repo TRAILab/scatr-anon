@@ -1,3 +1,4 @@
+import mmcv
 import numpy as np
 from mmdet3d.datasets.transforms.loading import LoadAnnotations3D
 from mmdet3d.registry import TRANSFORMS
@@ -32,9 +33,31 @@ class TrackLoadAnnotations3D(LoadAnnotations3D):
     def transform(self, results: dict) -> dict:
         results = super().transform(results)
         results = self._load_track_ids(results)
+        if self.with_mask:
+            self._load_masks(results)
         if self.with_forecasting:
             results = self._load_forecasting(results)
         return results
+
+    def _load_masks(self, results: dict) -> None:
+        gt_masks = []
+        gt_mask_pos = []
+        # iterate through each instance
+        for info in results['instances']:
+            mask_info = info.get('mask_info', None)
+            mask = [
+                None if (x is None or 'mask_crop_path' not in x) 
+                else mmcv.imread(x['mask_crop_path'])
+                for x in mask_info
+            ]
+            gt_masks.append(mask)
+            mask_pos = [
+                None if (x is None) 
+                else x.get('mask_crop_box', None)
+                for x in mask_info]
+            gt_mask_pos.append(mask_pos)
+        results['gt_masks'] = gt_masks
+        results['gt_mask_pos'] = gt_mask_pos
 
     def __repr__(self) -> str:
         """str: Return a string that describes the module."""

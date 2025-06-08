@@ -89,7 +89,11 @@ def nuscenes_data_prep(root_path,
     create_groundtruth_database(dataset_name, root_path, info_prefix,
                                 f'{info_prefix}_infos_train.pkl')
     create_groundtruth_track_database(
-        "NuScenesTrackingDataset", root_path, info_prefix, f'{info_prefix}_infos_train.pkl')
+        "NuScenesTrackingDataset", 
+        root_path, 
+        info_prefix, 
+        f'{info_prefix}_infos_train.pkl',
+        with_mask=True)
 
 
 
@@ -346,7 +350,8 @@ if __name__ == '__main__':
                 args.extra_tag, f'{args.extra_tag}_infos_train.pkl')
             create_groundtruth_track_database(
                 'NuScenesTrackingDataset', args.root_path,
-                args.extra_tag, f'{args.extra_tag}_infos_train.pkl')
+                args.extra_tag, f'{args.extra_tag}_infos_train.pkl',
+                with_mask=True)
         else:
             train_version = f'{args.version}-trainval'
             nuscenes_data_prep(
@@ -371,7 +376,8 @@ if __name__ == '__main__':
                 args.extra_tag, f'{args.extra_tag}_infos_train.pkl')
             create_groundtruth_track_database(
                 'NuScenesTrackingDataset', args.root_path,
-                args.extra_tag, f'{args.extra_tag}_infos_train.pkl')
+                args.extra_tag, f'{args.extra_tag}_infos_train.pkl',
+                with_mask=True)
         else:
             train_version = f'{args.version}'
             nuscenes_data_prep(

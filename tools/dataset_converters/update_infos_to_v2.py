@@ -273,11 +273,11 @@ def update_nuscenes_infos(pkl_path, out_dir):
 
     print('Start updating:')
     converted_list = []
-    for i, ori_info_dict in enumerate(
+    for data_idx, ori_info_dict in enumerate(
             mmengine.track_iter_progress(data_list['infos'])):
         temp_data_info = get_empty_standard_data_info(
             camera_types=camera_types)
-        temp_data_info['sample_idx'] = i
+        temp_data_info['sample_idx'] = data_idx
         temp_data_info['token'] = ori_info_dict['token']
         temp_data_info['ego2global'] = convert_quaternion_to_matrix(
             ori_info_dict['ego2global_rotation'],
@@ -367,6 +367,7 @@ def update_nuscenes_infos(pkl_path, out_dir):
                 empty_instance['instance_inds'] = ori_info_dict[
                     'instance_inds'][i]
                 empty_instance = clear_instance_unused_keys(empty_instance)
+                empty_instance['mask_info'] = [x[i] for x in ori_info_dict['mask_info']]
                 temp_data_info['instances'].append(empty_instance)
             temp_data_info['cam_instances'] = ori_info_dict.get('cam_instances', None)
         if 'pts_semantic_mask_path' in ori_info_dict:

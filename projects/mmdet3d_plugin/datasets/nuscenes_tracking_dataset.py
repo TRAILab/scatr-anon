@@ -21,14 +21,20 @@ from projects.mmdet3d_plugin.datasets.transforms import TrackSample
 
 @DATASETS.register_module()
 class NuScenesTrackingDataset(NuScenesDataset):
-    def __init__(self,
-                 *args,
-                 forecasting: bool = False,
-                 seq_split_num: int = 2,
-                 data_aug_conf: dict = {},
-                 verbose:bool=False,
-                 **kwargs,
-                 ):
+    def __init__(
+            self,
+            *args,
+            forecasting: bool = False,
+            seq_split_num: int = 2,
+            data_aug_conf: dict = {
+                "bot_pct_lim": (0, 0),
+                "W": 1600,
+                "H": 900,
+                "final_dim": (704, 256),
+            },
+            verbose:bool=False,
+            **kwargs,
+        ):
         self.forecasting = forecasting
         self.scene_tokens = []
         self.scene_tokens_2_instance_inds = {}

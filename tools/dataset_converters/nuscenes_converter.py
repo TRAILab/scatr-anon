@@ -356,8 +356,6 @@ def _fill_trainval_infos(nusc,
         )
         # iterate through each camera view
         for i, (bbox, ann2d_info) in enumerate(zip(bboxes, ann2d_infos_all)):
-            if ann2d_info is None:
-                continue
             if bbox is None:
                 # no bbox in this camera view
                 continue
@@ -392,7 +390,8 @@ def _fill_trainval_infos(nusc,
                 crop_filepath = osp.join(mask_directory, filename)
                 mmcv.imwrite(mask_crop, crop_filepath)
                 ann2d_info[j]['mask_crop_path'] = crop_filepath
-        info['cam_instances'] = ann2d_infos_all
+                ann2d_info[j]['mask_crop_box'] = (x1, y1, w, h)
+        info['mask_info'] = ann2d_infos_all
         if sample['scene_token'] in train_scenes:
             train_nusc_infos.append(info)
         else:
@@ -529,7 +528,7 @@ def export_2d_annotation(root_path, info_path, version, mono3d=True):
 
 def get_2d_boxes(nusc,
                  sample_data_token: str,
-                 visibilities: List[str],
+                 visibilities: List[str]=['', '1', '2', '3', '4'],
                  mono3d=True):
     """Get the 2D annotation records for a given `sample_data_token`.
 
@@ -566,14 +565,14 @@ def get_2d_boxes(nusc,
     ann_recs = [
         nusc.get('sample_annotation', token) for token in s_rec['anns']
     ]
-    ann_recs = [
-        ann_rec for ann_rec in ann_recs
-        if (ann_rec['visibility_token'] in visibilities)
-    ]
 
     repro_recs = []
 
     for ann_rec in ann_recs:
+        if ann_rec['visibility_token'] not in visibilities:
+            # Skip annotations that do not match the visibility filter.
+            repro_recs.append(None)
+            continue
         # Augment sample_annotation with token information.
         ann_rec['sample_annotation_token'] = ann_rec['token']
         ann_rec['sample_data_token'] = sample_data_token
@@ -642,6 +641,7 @@ def get_2d_boxes(nusc,
             # normalized center2D + depth
             # if samples with depth < 0 will be removed
             if repro_rec['center2d'][2] <= 0:
+                repro_recs.append(None)
                 continue
 
             ann_token = nusc.get('sample_annotation',
@@ -747,6 +747,7 @@ def generate_record(ann_rec: dict, x1: float, y1: float, x2: float, y2: float,
 
     if repro_rec['category_name'] not in NuScenesNameMapping:
         return None
+
     cat_name = NuScenesNameMapping[repro_rec['category_name']]
     coco_rec['category_name'] = cat_name
     coco_rec['category_id'] = nus_categories.index(cat_name)
