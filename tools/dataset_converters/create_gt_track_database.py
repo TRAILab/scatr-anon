@@ -115,7 +115,7 @@ def create_groundtruth_track_database(
         img = np.stack(example['img'], axis=0)
         gt_masks = example.get('gt_masks', None)
         gt_mask_pos = example.get('gt_mask_pos', None)
-        num_cams = len(gt_masks)
+        num_cams = len(gt_masks[0])
         group_dict = dict()
         if 'group_ids' in annos:
             group_ids = annos['group_ids']
