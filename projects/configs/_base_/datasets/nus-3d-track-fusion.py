@@ -10,10 +10,47 @@ input_modality = dict(
     use_external=False,
 )
 
+data_root = "data/nuscenes/"
 class_names = {{_base_.class_names}}
 point_cloud_range = {{_base_.point_cloud_range}}
 points_loader = {{_base_.points_loader}}
 image_size = (800, 448) # (width, height)
+
+db_sampler = dict(
+    type="TrackDBSampler",
+    data_root=data_root,
+    # info_path=data_root + 'nuscenes_track_dbinfos_train.pkl',
+    info_path=data_root + 'fusion_ts_debug_track_dbinfos_train.pkl',
+    rate=1.0,
+    prepare=dict(
+        # filter_by_difficulty=[], # no difficult in nuscenes
+        filter_by_min_points=dict(
+            car=5,
+            truck=5,
+            bus=5,
+            trailer=5,
+            construction_vehicle=5,
+            traffic_cone=5,
+            barrier=5,
+            motorcycle=5,
+            bicycle=5,
+            pedestrian=5)),
+    classes=class_names,
+    sample_groups=dict(
+        car=2,
+        truck=3,
+        construction_vehicle=7,
+        bus=4,
+        trailer=6,
+        barrier=2,
+        motorcycle=6,
+        bicycle=6,
+        pedestrian=2,
+        traffic_cone=2
+    ),
+    points_loader=points_loader,
+    min_pixels=5,
+)
 
 train_pipeline = [
     points_loader,
@@ -28,13 +65,15 @@ train_pipeline = [
         with_bbox_3d=True,
         with_label_3d=True,
         with_attr_label=False,
-        with_forecasting=False),
+        with_forecasting=False,
+        with_mask=True
+    ),
     # augmentations, kwargs in data_aug_conf
-    # dict(type='TrackSample', db_sampler=db_sampler),  # no TrackSample in Fusion
+    dict(type='TrackSample', db_sampler=db_sampler, sample_2d=True),
     dict(type='SeqGlobalRotScaleTrans'),
     dict(type='SeqRandomFlip3D', sync_2d=False, flip_img=False),
     dict(type='PointShuffle'),
-    # dict(type="PhotoMetricDistortionMultiViewImage"),
+    dict(type="PhotoMetricDistortionMultiViewImage"),
     dict(
         type='SeqImageAug3D',
         final_dim=image_size[::-1], # (height, width)
@@ -121,7 +160,7 @@ data_aug_conf = dict(
     translation_std_lidar=[0.5, 0.5, 0.5],
     flip_ratio_bev_horizontal=0.5,
     flip_ratio_bev_vertical=0.5,
-    use_track_sample_3d=False,
+    use_track_sample_3d=True,
     # img resize params
     W=1600,
     H=900,

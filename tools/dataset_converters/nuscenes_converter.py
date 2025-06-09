@@ -359,7 +359,7 @@ def _fill_trainval_infos(nusc,
             if bbox is None:
                 # no bbox in this camera view
                 continue
-            mask = masks_batch.pop(0)
+            mask = masks_batch.pop(0).astype(np.uint8)
             if len(mask.shape) == 4: # (N, 1, H, W)
                 # remove the "top-k mask" dimension
                 mask = mask.squeeze(1)
@@ -368,15 +368,15 @@ def _fill_trainval_infos(nusc,
             for j, ann in enumerate(ann2d_info):
                 if ann is None:
                     continue
+                obj_mask = mask[mask_idx]
                 # add the mask to the annotation info
-                x1, y1, w, h = map(np.round, ann['bbox'])
-                x1 = int(x1)
-                y1 = int(y1)
-                w = int(w)
-                h = int(h)
+                x1 = np.clip(ann['bbox'][0], 0, obj_mask.shape[1] - 1).astype(int)
+                y1 = np.clip(ann['bbox'][1], 0, obj_mask.shape[0] - 1).astype(int)
+                w = np.clip(ann['bbox'][2], 0, obj_mask.shape[1] - x1 - 1).astype(int)
+                h = np.clip(ann['bbox'][3], 0, obj_mask.shape[0] - y1 - 1).astype(int)
 
                 # Save a crop of the mask about the 2D bbox to a file
-                mask_crop = mask.astype(np.uint8)[mask_idx, y1:y1 + h, x1:x1 + w]
+                mask_crop = obj_mask[y1:y1 + h, x1:x1 + w]
                 if mask_crop.shape[0] == 0 or mask_crop.shape[1] == 0:
                     # empty crop, skip
                     mask_idx += 1

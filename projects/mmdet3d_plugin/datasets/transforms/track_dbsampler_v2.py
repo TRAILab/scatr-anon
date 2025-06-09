@@ -1,6 +1,8 @@
+import copy
 import os
 from typing import Dict, List, Optional, Union
 
+import mmcv
 import mmengine
 import numpy as np
 from mmdet3d.datasets.transforms import data_augment_utils
@@ -47,6 +49,7 @@ class TrackDBSampler(DataBaseSampler):
             backend_args=None,
         ),
         backend_args: Optional[dict] = None,
+        min_pixels:int =1,
     ) -> None:
         super(DataBaseSampler).__init__()
         self.data_root = data_root
@@ -112,6 +115,8 @@ class TrackDBSampler(DataBaseSampler):
         for class_name, track_dict in self.group_db_infos.items():
             self.sampler_dict[class_name] = TrackBatchSampler(
                 track_dict, class_name)
+            
+        self.min_pixels = min_pixels
 
     def get_samples(self, cls_distr, scene_token: str):
         """Get samples for a clip.
@@ -227,7 +232,7 @@ class TrackDBSampler(DataBaseSampler):
         )
 
         # convert list of samples into dict
-        return self.convert_samples(pruned_samples)
+        return self.convert_samples(pruned_samples, data)
 
     def prune_collisions(
         self, gt_bboxes_3d: np.ndarray, gt_instance_inds: np.ndarray, sampled: List[Dict]
@@ -286,7 +291,7 @@ class TrackDBSampler(DataBaseSampler):
                 coll_mat[:, i + num_gt_bboxes] = False
         return valid_samples
 
-    def convert_samples(self, samples: list) -> Union[None, Dict]:
+    def convert_samples(self, samples: list, data) -> Union[None, Dict]:
         if len(samples) == 0:
             return None
         ret = {}
@@ -294,7 +299,7 @@ class TrackDBSampler(DataBaseSampler):
             [s["box3d_lidar"] for s in samples], axis=0)
         ret["gt_labels_3d"] = [self.cat2label[s["name"]] for s in samples]
         ret["instance_inds"] = [s["instance_ind"] for s in samples]
-        
+
         if 'forecasting_locs' in samples[0]:
             ret["gt_forecasting_locs"] = np.stack(
                 [s["forecasting_locs"] for s in samples], axis=0
@@ -319,7 +324,122 @@ class TrackDBSampler(DataBaseSampler):
             sampled_points.append(s_points)
         ret["points"] = sampled_points[0].cat(sampled_points)
 
+        # paste img mask
+        ret["img"] = self.paste_objects(
+            samples,
+            data,
+        )
+
         return ret
+
+
+    def paste_objects(self, samples: list, data):
+        """Paste sampled objects to the image.
+        TODO support blending of pasted objects (see seamlessClone in OpenCV, or gaussian blur)
+        """
+        img = data['img']
+        # TODO remove this deepcopy when validated
+        orig_img = copy.deepcopy(img)  # keep original image for debugging
+        # append the gt 3d boxes to the sampled 3d boxes
+        centers = [s['box3d_lidar'][:2] for s in samples] + data["gt_bboxes_3d"].numpy()[:, :2].tolist()
+        centers = np.array(centers)
+        distances = np.linalg.norm(centers, axis=1)
+
+        obj_cutout = [
+            # iterate over each view of the sample
+            [mmcv.imread(os.path.join(self.data_root, s_i)) if s_i is not None else None for s_i in s["img_path"]]
+            # iterate over each sample
+            for s in samples]
+
+        # get gt cutouts from the image based on gt masks
+        gt_cutout = []
+        for i, (pos, mask) in enumerate(zip(data["gt_mask_pos"], data["gt_masks"])):
+            gt_cutout_views = []
+            # iterate through each view of the gt cutout
+            for view_i, pos_i in enumerate(pos):
+                if pos_i is None:
+                    gt_cutout_views.append(None)
+                    continue
+                (x1, y1, w, h) = pos_i
+                if w == 0 or h == 0:
+                    gt_cutout_views.append(None)
+                    continue
+                # extract the region from the original image
+                roi = orig_img[view_i][y1:y1+h, x1:x1+w]
+                # apply the binary mask to get only the object pixels
+                binary_mask = (mask[view_i] > 0).astype(np.float32)
+                cutout = roi * binary_mask
+                gt_cutout_views.append(cutout)
+            gt_cutout.append(gt_cutout_views)
+
+        # append gt cutouts to the sampled cutouts
+        obj_cutout.extend(gt_cutout)
+
+        # append gt mask positions to the sampled mask positions
+        mask_pos = [s['box2d_camera'] for s in samples] + data["gt_mask_pos"]
+
+        # Sort indices by farthest to closest (descending order)
+        sorted_distance_inds = np.argsort(distances)[::-1]
+        sorted_cutout = [obj_cutout[i] for i in sorted_distance_inds]
+        sorted_mask_pos = [mask_pos[i] for i in sorted_distance_inds]
+
+        for cutout_i_views, pos_i in zip(sorted_cutout, sorted_mask_pos):
+            # paste the mask to the image
+            # iterate over each cam view
+            for view_i, cutout_i in enumerate(cutout_i_views):
+                if cutout_i is None:
+                    continue
+                assert pos_i is not None, "Mask position must be provided"
+                # get the position of the mask
+                x1, y1, w, h = pos_i[view_i]
+                if w * h < self.min_pixels: # skip if the mask is too small
+                    continue
+
+                # create a binary mask where non-zero values are 1
+                binary_mask = (cutout_i > 0).astype(np.float32)
+                # get the region of interest in the image
+                roi = img[view_i][y1:y1 + h, x1:x1 + w]
+                # blend the mask with the image, ignoring zero values
+                img[view_i][y1:y1+h, x1:x1+w] = \
+                    (roi * (1 - binary_mask) + cutout_i * binary_mask).astype(roi.dtype)
+        # compute distance of each box from ego. insert in reverse order
+        # the bbox might exceed the img size because the img is different
+
+        # # choose a blend option
+        # if not self.blending_type:
+        #     blending_op = 'none'
+
+        # else:
+        #     blending_choice = np.random.randint(len(self.blending_type))
+        #     blending_op = self.blending_type[blending_choice]
+
+        # if blending_op.find('poisson') != -1:
+        #     # options: cv2.NORMAL_CLONE=1, or cv2.MONOCHROME_TRANSFER=3
+        #     # cv2.MIXED_CLONE mixed the texture, thus is not used.
+        #     if blending_op == 'poisson':
+        #         mode = np.random.choice([1, 3], 1)[0]
+        #     elif blending_op == 'poisson_normal':
+        #         mode = cv2.NORMAL_CLONE
+        #     elif blending_op == 'poisson_transfer':
+        #         mode = cv2.MONOCHROME_TRANSFER
+        #     else:
+        #         raise NotImplementedError
+        #     center = (int(x1 + w / 2), int(y1 + h / 2))
+        #     img = cv2.seamlessClone(obj_img, img, obj_mask * 255, center, mode)
+        # else:
+        #     if blending_op == 'gaussian':
+        #         obj_mask = cv2.GaussianBlur(
+        #             obj_mask.astype(np.float32), (5, 5), 2)
+        #     elif blending_op == 'box':
+        #         obj_mask = cv2.blur(obj_mask.astype(np.float32), (3, 3))
+        #     paste_mask = 1 - obj_mask
+        #     img[y1:y1 + h,
+        #         x1:x1 + w] = (img[y1:y1 + h, x1:x1 + w].astype(np.float32) *
+        #                       paste_mask[..., None]).astype(np.uint8)
+        #     img[y1:y1 + h, x1:x1 + w] += (obj_img.astype(np.float32) *
+        #                                   obj_mask[..., None]).astype(np.uint8)
+
+        return img
 
 
 class TrackBatchSampler(BatchSampler):

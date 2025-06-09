@@ -250,8 +250,7 @@ class TrackSample(ObjectSample):
     TODO: support ground plane sampling (only for KITTI dataset)
     """
 
-    def __init__(self, sample_2d: bool = False, use_ground_plane: bool = False, **kwargs):
-        assert not sample_2d, "2D sampling is not supported in TrackSample yet"
+    def __init__(self, use_ground_plane: bool = False, **kwargs):
         assert not use_ground_plane, "Ground plane sampling is not supported in TrackSample yet"
         super().__init__(**kwargs)
 
@@ -260,7 +259,7 @@ class TrackSample(ObjectSample):
 
         if self.disabled or sampled_track_list is None:
             return input_dict
-        # print([x['box3d_lidar'] for x in sampled_track_list])
+
         sampled_dict = self.db_sampler.sample_all(input_dict, sampled_track_list)
         if sampled_dict is None:
             return input_dict
@@ -315,6 +314,11 @@ class TrackSample(ObjectSample):
             input_dict["gt_forecasting_locs"] = gt_forecasting_locs
             input_dict["gt_forecasting_masks"] = gt_forecasting_masks
             input_dict["gt_forecasting_types"] = gt_forecasting_types
+        
+        # if img in sampled_dict, update the img in input_dict
+        # this is used for 2D sampling
+        if 'img' in sampled_dict:
+            input_dict["img"] = sampled_dict["img"]
 
         return input_dict
 

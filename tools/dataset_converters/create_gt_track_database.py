@@ -185,8 +185,8 @@ def create_groundtruth_track_database(
                     f'{info_prefix}_track_gt_database', 
                     filename + f'cam_{cam_idx}.png')
                 x1, y1, w, h = mask_pos
-                # xyxy format
-                gt_boxes[cam_idx] = np.array([x1, y1, x1 + w, y1 + h])
+                # xywh format
+                gt_boxes[cam_idx] = np.array([x1, y1, w, h])
                 masked_patch = img[cam_idx, y1:y1+h, x1:x1+w].copy() * \
                     gt_mask
                 mmcv.imwrite(masked_patch, img_patch_path)
