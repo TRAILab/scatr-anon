@@ -105,14 +105,8 @@ def main():
 
     init_default_scope(cfg.get('default_scope', 'mmdet3d'))
 
-    try:
-        dataset = DATASETS.build(
-            cfg.train_dataloader.dataset,
-            default_args=dict(filter_empty_gt=False))
-    except TypeError:  # seg dataset doesn't have `filter_empty_gt` key
-        dataset = DATASETS.build(cfg.train_dataloader.dataset)
-
     dataloader = Runner.build_dataloader(cfg.train_dataloader)
+    dataset = dataloader.dataset
 
     # configure visualization mode
     vis_task = args.task
@@ -120,8 +114,7 @@ def main():
     visualizer = VISUALIZERS.build(cfg.visualizer)
     visualizer.dataset_meta = dataset.metainfo
 
-    progress_bar = ProgressBar(len(dataset))
-
+    progress_bar = ProgressBar(len(dataloader))
     for i, item in enumerate(dataloader):
         # the 3D Boxes in input could be in any of three coordinates
         data_input = item['inputs']
