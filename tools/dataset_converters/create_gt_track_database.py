@@ -97,6 +97,10 @@ def create_groundtruth_track_database(
             data_path, f'{info_prefix}_track_dbinfos_train.pkl')
     mmengine.mkdir_or_exist(database_save_path)
     all_db_infos = dict()
+    
+    # Counters for logging statistics
+    class_sample_counts = dict()  # Count of total samples per class
+    class_mask_counts = dict()    # Count of samples with at least 1 mask per class
 
     group_counter = 0
     # iterate through each sample in the dataset
@@ -133,6 +137,14 @@ def create_groundtruth_track_database(
             if used_classes is not None and gt_labels[obj_idx] not in used_classes:
                 # skip unused class
                 continue
+            
+            # Track class sample counts
+            class_name = gt_labels[obj_idx]
+            if class_name not in class_sample_counts:
+                class_sample_counts[class_name] = 0
+                class_mask_counts[class_name] = 0
+            class_sample_counts[class_name] += 1
+            
             filename = f'{image_idx}_{gt_labels[obj_idx]}_{obj_idx}.bin'
             abs_filepath = osp.join(database_save_path, filename)
             rel_filepath = osp.join(
@@ -177,9 +189,12 @@ def create_groundtruth_track_database(
             # iterate through each camera
             img_paths = [None] * num_cams
             gt_boxes = [None] * num_cams
+            has_valid_mask = False  # Track if this sample has at least one valid mask
+            
             for cam_idx, (gt_mask, mask_pos) in enumerate(zip(gt_masks[obj_idx], gt_mask_pos[obj_idx])):
                 if gt_mask is None or mask_pos is None:
                     continue
+                has_valid_mask = True  # Found at least one valid mask
                 img_patch_path = abs_filepath + f'cam_{cam_idx}.png'
                 rel_path = osp.join(
                     f'{info_prefix}_track_gt_database', 
@@ -191,6 +206,11 @@ def create_groundtruth_track_database(
                     gt_mask
                 mmcv.imwrite(masked_patch, img_patch_path)
                 img_paths[cam_idx] = rel_path
+            
+            # Update mask count if this sample has at least one valid mask
+            if has_valid_mask:
+                class_mask_counts[class_name] += 1
+                
             db_info.update({
                 'box2d_camera': gt_boxes,
                 'img_path': img_paths,
@@ -199,6 +219,29 @@ def create_groundtruth_track_database(
 
     for k, v in all_db_infos.items():
         print(f'load {len(v)} {k} database infos')
+    
+    # Log statistics for samples per class and mask coverage
+    print("\n=== Database Creation Statistics ===")
+    print("Samples per class:")
+    total_samples = 0
+    for class_name in sorted(class_sample_counts.keys()):
+        count = class_sample_counts[class_name]
+        total_samples += count
+        print(f"  {class_name}: {count}")
+    print(f"  Total: {total_samples}")
+    
+    if with_mask:
+        print("\nSamples with at least 1 mask per class:")
+        total_with_masks = 0
+        for class_name in sorted(class_mask_counts.keys()):
+            mask_count = class_mask_counts[class_name]
+            sample_count = class_sample_counts[class_name]
+            total_with_masks += mask_count
+            percentage = (mask_count / sample_count * 100) if sample_count > 0 else 0
+            print(f"  {class_name}: {mask_count}/{sample_count} ({percentage:.1f}%)")
+        total_percentage = (total_with_masks / total_samples * 100) if total_samples > 0 else 0
+        print(f"  Total: {total_with_masks}/{total_samples} ({total_percentage:.1f}%)")
+    print("===================================\n")
 
     with open(db_info_save_path, 'wb') as f:
         pickle.dump(all_db_infos, f)
