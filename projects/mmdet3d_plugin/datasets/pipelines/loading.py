@@ -44,12 +44,12 @@ class TrackLoadAnnotations3D(LoadAnnotations3D):
         gt_masks = []
         gt_mask_pos = []
         # iterate through each instance
-        for info in results['instances']:
-            if 'mask_info' not in info:
-                gt_masks.append([None] * self.num_cams)
-                gt_mask_pos.append([None] * self.num_cams)
-                continue
-            mask_info = info['mask_info']
+        for mask_info in results['ann_info']['mask_info']:
+            # mask_info = ann_info.get('mask_info', None)
+            # if mask_info is None or len(mask_info) == 0:
+            #     gt_masks.append([None] * self.num_cams)
+            #     gt_mask_pos.append([None] * self.num_cams)
+            #     continue
             mask = [
                 None if (x is None or 'mask_crop_path' not in x) 
                 else mmcv.imread(x['mask_crop_path'])
