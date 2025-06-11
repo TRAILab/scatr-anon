@@ -353,7 +353,7 @@ if __name__ == '__main__':
                 args.extra_tag, f'{args.extra_tag}_infos_train.pkl',
                 with_mask=True)
         else:
-            train_version = f'{args.version}-trainval'
+            train_version = f'{args.version}'
             nuscenes_data_prep(
                 root_path=args.root_path,
                 info_prefix=args.extra_tag,
