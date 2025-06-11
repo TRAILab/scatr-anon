@@ -346,14 +346,18 @@ def _fill_trainval_infos(nusc,
             img = mmcv.imread(cam_info['data_path'], channel_order='rgb')
             imgs.append(img)
 
-        predictor.set_image_batch(imgs)
-        masks_batch, scores, _ = predictor.predict_batch(
-            None,
-            None,
-            # account for views with 0 bboxes
-            box_batch=[x for x in bboxes if x is not None],
-            multimask_output=False,
-        )
+        if len(imgs) != 0: # no boxes in any views
+            predictor.set_image_batch(imgs)
+            masks_batch, _, _ = predictor.predict_batch(
+                None,
+                None,
+                # account for views with 0 bboxes
+                box_batch=[x for x in bboxes if x is not None],
+                multimask_output=False,
+            )
+        else:
+            masks_batch = []
+        
         # iterate through each camera view
         for i, (bbox, ann2d_info) in enumerate(zip(bboxes, ann2d_infos_all)):
             if bbox is None:
