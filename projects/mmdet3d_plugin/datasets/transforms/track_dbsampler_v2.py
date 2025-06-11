@@ -49,7 +49,8 @@ class TrackDBSampler(DataBaseSampler):
             backend_args=None,
         ),
         backend_args: Optional[dict] = None,
-        min_pixels:int =1,
+        min_pixels:int = 1,
+        mixup:float=0.7, # see AutoAlignv2
     ) -> None:
         super(DataBaseSampler).__init__()
         self.data_root = data_root
@@ -60,6 +61,8 @@ class TrackDBSampler(DataBaseSampler):
         self.cat2label = {name: i for i, name in enumerate(classes)}
         self.points_loader = TRANSFORMS.build(points_loader)
         self.backend_args = backend_args
+        self.mixup = mixup  # mixing factor for pasting objects
+        assert 0 < self.mixup <= 1, "mixup should be in range (0, 1]"
 
         # load data base infos
         with get_local_path(info_path, backend_args=self.backend_args) as local_path:
@@ -397,11 +400,12 @@ class TrackDBSampler(DataBaseSampler):
 
                 # create a binary mask where non-zero values are 1
                 binary_mask = (cutout_i > 0).astype(np.float32)
+                mixup_mask = binary_mask * self.mixup
                 # get the region of interest in the image
                 roi = img[view_i][y1:y1 + h, x1:x1 + w]
                 # blend the mask with the image, ignoring zero values
                 img[view_i][y1:y1+h, x1:x1+w] = \
-                    (roi * (1 - binary_mask) + cutout_i * binary_mask).astype(roi.dtype)
+                    (roi * (1 - mixup_mask) + cutout_i * mixup_mask).astype(roi.dtype)
         # compute distance of each box from ego. insert in reverse order
         # the bbox might exceed the img size because the img is different
 
