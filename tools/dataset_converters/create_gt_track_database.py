@@ -190,7 +190,7 @@ def create_groundtruth_track_database(
             img_paths = [None] * num_cams
             gt_boxes = [None] * num_cams
             has_valid_mask = False  # Track if this sample has at least one valid mask
-            
+
             for cam_idx, (gt_mask, mask_pos) in enumerate(zip(gt_masks[obj_idx], gt_mask_pos[obj_idx])):
                 if gt_mask is None or mask_pos is None:
                     continue
@@ -204,9 +204,9 @@ def create_groundtruth_track_database(
                 gt_boxes[cam_idx] = np.array([x1, y1, w, h])
                 masked_patch = img[cam_idx, y1:y1+h, x1:x1+w].copy() * \
                     gt_mask
-                mmcv.imwrite(masked_patch, img_patch_path)
+                mmcv.imwrite(masked_patch.astype(np.uint), img_patch_path)
                 img_paths[cam_idx] = rel_path
-            
+
             # Update mask count if this sample has at least one valid mask
             if has_valid_mask:
                 class_mask_counts[class_name] += 1
