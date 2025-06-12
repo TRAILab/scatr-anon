@@ -353,7 +353,7 @@ if __name__ == '__main__':
                 args.extra_tag, f'{args.extra_tag}_infos_train.pkl',
                 with_mask=True)
         else:
-            train_version = f'{args.version}'
+            train_version = 'v1.0-trainval'
             nuscenes_data_prep(
                 root_path=args.root_path,
                 info_prefix=args.extra_tag,
@@ -361,7 +361,7 @@ if __name__ == '__main__':
                 dataset_name='NuScenesDataset',
                 out_dir=args.out_dir,
                 max_sweeps=args.max_sweeps)
-            test_version = f'{args.version}-test'
+            test_version = 'v1.0-test'
             nuscenes_data_prep(
                 root_path=args.root_path,
                 info_prefix=args.extra_tag,
