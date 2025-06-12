@@ -17,10 +17,12 @@ checkpoint_epoch_interval = 1
 val_epoch_interval = 1
 image_size = (800, 448) # (width, height)
 
-short_name = "baseline-LC"
+short_name = "LC-sp4dL-pretrained-mm_cutpaste"
 work_dir = f"work_dirs/sparse4dv3-LC_nusc-{num_gpus}_bs{batch_size}_{num_epochs}e_{short_name}"
 
-# resume=True
+# load_from = 'ckpts/focalformer3d_converted/FocalFormer3D_LC_ep6_mAP705_NDS731.pth'
+load_from = 'work_dirs/sparse4dv3-temporal_lidar_1x4_bs6-10e_lidar-4g-emb256_new-bn/epoch_10.pth'
+# resume = True
 
 class_names = [
     "car",

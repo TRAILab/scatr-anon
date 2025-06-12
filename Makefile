@@ -1,6 +1,6 @@
 WORK_DIR=${PWD}
 PROJECT=sparse4d-lidar
-DOCKER_IMAGE=bcheong/${PROJECT}:latest
+DOCKER_IMAGE=bcheong/${PROJECT}:sam
 DOCKER_FILE=Docker/Dockerfile
 DATA_ROOT_LOCAL_MINI=/media/brian/Data/nuscenes
 DATA_ROOT_LOCAL=/media/brian/Data/nuscenes

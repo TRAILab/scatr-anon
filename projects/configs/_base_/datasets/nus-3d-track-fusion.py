@@ -16,14 +16,15 @@ point_cloud_range = {{_base_.point_cloud_range}}
 points_loader = {{_base_.points_loader}}
 image_size = (800, 448) # (width, height)
 
+train_pkl_path = 'nusc_fusion_track_infos_train.pkl'
+val_pkl_path = 'nusc_fusion_track_infos_val.pkl'
+
 db_sampler = dict(
     type="TrackDBSampler",
     data_root=data_root,
-    # info_path=data_root + 'nuscenes_track_dbinfos_train.pkl',
-    info_path=data_root + 'fusion_ts_debug_track_dbinfos_train.pkl',
+    info_path=data_root + 'nusc_fusion_track_track_dbinfos_train.pkl',
     rate=1.0,
     prepare=dict(
-        # filter_by_difficulty=[], # no difficult in nuscenes
         filter_by_min_points=dict(
             car=5,
             truck=5,
@@ -192,6 +193,7 @@ data_aug_conf_test = dict(
 
 train_dataloader = dict(
     dataset=dict(
+        ann_file=train_pkl_path,
         data_aug_conf=data_aug_conf,
         pipeline=train_pipeline,
         modality=input_modality,
@@ -200,6 +202,7 @@ train_dataloader = dict(
 
 val_dataloader = dict(
     dataset=dict(
+        ann_file=val_pkl_path,
         data_aug_conf=data_aug_conf_test,
         pipeline=val_pipeline,
         modality=input_modality
