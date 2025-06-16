@@ -12,7 +12,7 @@ log_level = "INFO"
 batch_size = 2
 num_gpus = 8
 total_batch_size = batch_size * num_gpus
-num_epochs = 20
+num_epochs = 10
 checkpoint_epoch_interval = 1
 val_epoch_interval = 1
 image_size = (800, 448) # (width, height)
@@ -20,8 +20,6 @@ image_size = (800, 448) # (width, height)
 short_name = "baseline-LC"
 work_dir = f"work_dirs/sparse4dv3-LC_nusc-{num_gpus}_bs{batch_size}_{num_epochs}e_{short_name}"
 
-load_from = 'ckpts/focalformer3d_converted/DeformFormer3D_L_iterimg_ep20_mAP655_NDS707.pth'
-# resume_from = 'work_dirs/sparse4dv3-temporal_lidar_1x8_bs6-12e_lidar-group/epoch_4.pth'
 # resume=True
 
 class_names = [
@@ -110,6 +108,14 @@ val_dataloader = dict(
 )
 test_dataloader = dict(
     batch_size=batch_size,
+)
+
+val_evaluator = dict(
+    jsonfile_prefix=f"{work_dir}/nuscenes_val",
+)
+
+test_evaluator = dict(
+    jsonfile_prefix=f"{work_dir}/nuscenes_test",
 )
 
 # ================== training ========================

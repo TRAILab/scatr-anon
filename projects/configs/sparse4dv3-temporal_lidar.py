@@ -112,6 +112,14 @@ test_dataloader = dict(
     batch_size=batch_size,
 )
 
+val_evaluator = dict(
+    jsonfile_prefix=f"{work_dir}/nuscenes_val",
+)
+
+test_evaluator = dict(
+    jsonfile_prefix=f"{work_dir}/nuscenes_test",
+)
+
 # ================== training ========================
 lr = 1.0e-5*total_batch_size  # 6e-4 for 8 gpus, bs=6
 optim_wrapper = dict(
