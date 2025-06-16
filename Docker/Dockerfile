@@ -1,5 +1,5 @@
 # Base image
-ARG PYTORCH="2.6.0"
+ARG PYTORCH="2.5.1"
 ARG CUDA="12.4"
 ARG CUDNN="9"
 
@@ -59,8 +59,7 @@ RUN pip install wandb==0.18.1
 ENV FORCE_CUDA="1"
 
 # Custom nuscenes-devkit, for compatibility with new motmetrics, newest pandas
-RUN git clone https://github.com/TRAILab/nuscenes-devkit.git && cd nuscenes-devkit && \
-    pip install ./setup
+RUN pip install git+https://github.com/TRAILab/nuscenes-devkit.git
 
 RUN git clone https://github.com/facebookresearch/sam2.git && cd sam2 && \
     pip install -e . && \
