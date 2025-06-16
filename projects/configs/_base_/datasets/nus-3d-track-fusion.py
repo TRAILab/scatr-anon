@@ -50,6 +50,7 @@ db_sampler = dict(
         traffic_cone=2
     ),
     points_loader=points_loader,
+    sample_2d=True,
     min_pixels=5,
 )
 

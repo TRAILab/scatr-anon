@@ -49,6 +49,7 @@ class TrackDBSampler(DataBaseSampler):
             backend_args=None,
         ),
         backend_args: Optional[dict] = None,
+        sample_2d: bool = False,
         min_pixels:int = 1,
         mixup:float=0.7, # see AutoAlignv2
     ) -> None:
@@ -120,6 +121,7 @@ class TrackDBSampler(DataBaseSampler):
                 track_dict, class_name)
             
         self.min_pixels = min_pixels
+        self.sample_2d = sample_2d
 
     def get_samples(self, cls_distr, scene_token: str):
         """Get samples for a clip.
@@ -328,10 +330,11 @@ class TrackDBSampler(DataBaseSampler):
         ret["points"] = sampled_points[0].cat(sampled_points)
 
         # paste img mask
-        ret["img"] = self.paste_objects(
-            samples,
-            data,
-        )
+        if self.sample_2d:
+            ret["img"] = self.paste_objects(
+                samples,
+                data,
+            )
 
         return ret
 

@@ -64,7 +64,9 @@ db_sampler = dict(
         pedestrian=2,
         traffic_cone=2
     ),
-    points_loader=points_loader)
+    points_loader=points_loader,
+    sample_2d=False
+)
 
 
 train_pipeline = [
