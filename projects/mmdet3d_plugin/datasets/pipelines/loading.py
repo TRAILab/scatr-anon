@@ -44,6 +44,13 @@ class TrackLoadAnnotations3D(LoadAnnotations3D):
         gt_masks = []
         gt_mask_pos = []
         # iterate through each instance
+        if 'mask_info' not in results['ann_info']:
+            # if no mask_info is present, return empty lists
+            gt_masks = [[None] * self.num_cams for _ in range(len(results['ann_info']['gt_bboxes_3d']))]
+            gt_mask_pos = [[None] * self.num_cams for _ in range(len(results['ann_info']['gt_bboxes_3d']))]
+            results['gt_masks'] = gt_masks
+            results['gt_mask_pos'] = gt_mask_pos
+            return
         for mask_info in results['ann_info']['mask_info']:
             # mask_info = ann_info.get('mask_info', None)
             # if mask_info is None or len(mask_info) == 0:
