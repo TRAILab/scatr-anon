@@ -69,7 +69,7 @@ RUN git clone https://github.com/facebookresearch/sam2.git && cd sam2 && \
 RUN pip install "mmengine==0.10.5" "mmcv==2.1.0" "mmdet==3.2.0" "mmdet3d==1.4.0"
 
 # install spconv
-RUN pip install spconv-cu124
+RUN pip install spconv-cu124 'numpy<2'
 
 WORKDIR /workspace/sparse4d-lidar
 ENV PYTHONPATH="/workspace/sparse4d-lidar:${PYTHONPATH}"
