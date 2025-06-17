@@ -157,7 +157,6 @@ class TrackSampler3D(TrackImgSampler):
 
         balanced_group_indices = [copy.deepcopy(group_indices[i])
                                   for i in balanced_group_indices]
-        breakpoint()
         return balanced_group_indices
 
     def __iter__(self):
