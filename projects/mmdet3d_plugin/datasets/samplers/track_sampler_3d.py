@@ -104,13 +104,17 @@ class TrackSampler3D(TrackImgSampler):
             # self.group_indices = [x.tolist() for x in self.group_indices]
         self.classes = self.dataset.metainfo['classes']
         if use_CBGS:
+            print("Using CBGS sampling for TrackSampler3D")
+            print("Before CBGS, number of groups:", len(self.group_indices))
             self.group_indices = self.get_CBGS_sample_indices(
                 self.group_indices)
+            print("After CBGS, number of groups:", len(self.group_indices))
         self.num_groups = len(self.group_indices)
         assert self.num_groups >= self.global_batch_size, (
             f"only {self.num_groups} clips loaded but {self.world_size} gpus were given, each with a batch size of {self.batch_size}.")
-        
+        self.getting_len = True
         self.num_batches = len([x for x in self])  # length is dependent on world size and batch size, calculation too complex, brute force computation of length
+        self.getting_len = False
 
     def get_CBGS_sample_indices(self, group_indices):
         cls_group_indices = [set() for cat in self.classes]
@@ -224,7 +228,10 @@ class TrackSampler3D(TrackImgSampler):
                     if np.random.uniform() < self.seq_flip_prob:
                         # flip the sequence
                         next_group = next_group[::-1]
-                    group_aug = self.dataset.get_augmentation(next_group)
+                    if not self.getting_len:
+                        group_aug = self.dataset.get_augmentation(next_group)
+                    else:
+                        group_aug = [None] * len(next_group)
                     active_groups[batch_idx] = [
                         {
                             "index": index,
