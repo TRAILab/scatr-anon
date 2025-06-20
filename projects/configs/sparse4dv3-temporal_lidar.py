@@ -12,11 +12,11 @@ log_level = "INFO"
 batch_size = 6
 num_gpus = 4
 total_batch_size = batch_size * num_gpus
-num_epochs = 10
+num_epochs = 60 # about 66000 iterations for 1x schedule with batch size 6 and 4 GPUs
 iters_per_epoch = 28130 // total_batch_size  # 28130 samples in nuscenes train set
 num_iters = iters_per_epoch * num_epochs  # 64000 iterations for 1x schedule with batch size 6 and 4 GPUs
-checkpoint_epoch_interval = 1
-val_epoch_interval = 1
+checkpoint_epoch_interval = 6
+val_epoch_interval = 6
 log_processor = dict(by_epoch=False)
 
 short_name = "apollo-lidar-4g-2group-qc-cbgsv2"
