@@ -5,7 +5,7 @@
 #SBATCH --ntasks=1                    # number of MPI processes
 #SBATCH --mem=256G                     # Job CPU memory request
 #SBATCH --time=60:00:00               # Time limit hrs:min:sec
-#SBATCH --output=/home/cheongb2/job_artifacts/Sparse4D-L/slurm_logs/%x-%j.log   # Standard output and error log
+#SBATCH --output=/home/cheongb2/projects/rrg-swasland/cheongb2/job_artifacts/Sparse4D-L/slurm_logs/%x-%j.log   # Standard output and error log
 #SBATCH --cpus-per-task=32
 #SBATCH --gres=gpu:a100:4           # gpu:t4:4 (graham) or gpu:a100:1 (narval)
 #SBATCH --mail-user="g1j5i4u0v5b4y4x4@trail-utias.slack.com"
@@ -25,21 +25,30 @@ HOME_DIR=/home/$USER
 TMP_DATA_DIR=$SLURM_TMPDIR/data
 # TMP_DATA_DIR=/home/$USER/scratch/temp_data # Slurm unzip alternative
 PROJ_DIR=$HOME_DIR/repos/Sparse4D-LiDAR-mirror
-OUT_DIR=$HOME_DIR/job_artifacts/Sparse4D-L/artifacts/
+OUT_DIR=$HOME_DIR/projects/rrg-swasland/$USER/job_artifacts/Sparse4D-L/work_dirs/
 SING_IMG=/home/$USER/projects/rrg-swasland/$USER/singularity/sparse4d-lidar-apptainer-0223.sif
 DATA_DIR=/home/$USER/projects/rrg-swasland/$USER/nuscenes # use a symlink to the actual data, may be different on each server
 PKL_DIR=/home/$USER/projects/rrg-swasland/$USER/nuscenes_pkls/sparse4dL
 CKPT_DIR=/home/$USER/projects/rrg-swasland/$USER/ckpts/sparse4d
 
+mkdir -p $OUT_DIR
+mkdir -p $WANDB_ARTIFACT_DIR
+mkdir -p $WANDB_DATA_DIR
+mkdir -p $WANDB_CACHE_DIR
+
 # Container paths
+# THERE SHOULD BE NO SPACES AFTER THE \
 PROJECT_NAME=sparse4d-l
 CONTAINER_PATH=/workspace/$PROJECT_NAME # path to main workspace
 VOLUMES="--bind=$PROJ_DIR:$CONTAINER_PATH \
-         --bind=$TMP_DATA_DIR:$CONTAINER_PATH/data/nuscenes \
-         --bind=$OUT_DIR:$CONTAINER_PATH/work_dirs \
-         --bind=$SLURM_TMPDIR:/tmp \
-         --bind=$CKPT_DIR:$CONTAINER_PATH/ckpts
-        "
+--bind=$TMP_DATA_DIR:$CONTAINER_PATH/data/nuscenes \
+--bind=$OUT_DIR:$CONTAINER_PATH/work_dirs \
+--bind=$WANDB_ARTIFACT_DIR:$CONTAINER_PATH/wandb_artifacts \
+--bind=$WANDB_DATA_DIR:$CONTAINER_PATH/wandb_data \
+--bind=$WANDB_CACHE_DIR:$CONTAINER_PATH/wandb_cache \
+--bind=$SLURM_TMPDIR:/tmp \
+--bind=$CKPT_DIR:$CONTAINER_PATH/ckpts
+"
 CFG_FILE=projects/configs/sparse4dv3-temporal_lidar.py
 
 # Command
@@ -51,6 +60,9 @@ CONTAINER_CMD="apptainer exec --nv -c -e --writable-tmpfs --pwd $CONTAINER_PATH 
 --env "CUDA_LAUNCH_BLOCKING=1"
 --env "TORCH_USE_CUDA_DSA=1"
 --env "TORCH_NCCL_ENABLE_MONITORING=0"
+--env "WANDB_ARTIFACT_DIR=$CONTAINER_PATH/wandb_artifacts"
+--env "WANDB_DATA_DIR=$CONTAINER_PATH/wandb_data"
+--env "WANDB_CACHE_DIR=$CONTAINER_PATH/wandb_cache"
 $VOLUMES \
 $SING_IMG \
 $BASE_CMD
