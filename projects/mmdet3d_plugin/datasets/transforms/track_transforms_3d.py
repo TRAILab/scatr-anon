@@ -1,3 +1,4 @@
+from multiprocessing import Value
 from typing import Any, Dict
 
 import numpy as np
@@ -242,7 +243,7 @@ class TrackNameFilter(ObjectNameFilter):
 
         return input_dict
 
-
+GLOBAL_DISABLE_TRACK_SAMPLE = Value('b', False)
 @TRANSFORMS.register_module()
 class TrackSample(ObjectSample):
     """
@@ -253,12 +254,14 @@ class TrackSample(ObjectSample):
     def __init__(self, use_ground_plane: bool = False, **kwargs):
         assert not use_ground_plane, "Ground plane sampling is not supported in TrackSample yet"
         super().__init__(**kwargs)
+        self.disabled = GLOBAL_DISABLE_TRACK_SAMPLE
 
     def transform(self, input_dict: dict) -> dict:
         sampled_track_list = input_dict["aug_config"].get("sampled_dict", None)
 
-        if self.disabled or sampled_track_list is None:
+        if self.disabled.value or sampled_track_list is None:
             return input_dict
+        print("Running TrackSample transform", self.disabled)
 
         sampled_dict = self.db_sampler.sample_all(input_dict, sampled_track_list)
         if sampled_dict is None:

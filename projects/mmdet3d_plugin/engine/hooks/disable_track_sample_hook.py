@@ -5,12 +5,12 @@ from mmengine.hooks import Hook
 from mmengine.model import is_model_wrapper
 from mmengine.runner import Runner
 
-from projects.mmdet3d_plugin.datasets import TrackSample
+from projects.mmdet3d_plugin.datasets.transforms.track_transforms_3d import TrackSample, GLOBAL_DISABLE_TRACK_SAMPLE
 
 
 @HOOKS.register_module()
 class DisableTrackSampleHook(DisableObjectSampleHook):
-    def __init__(self, disable_after_epoch:int = 15, disable_after_iter:int = None):
+    def __init__(self, disable_after_epoch:int = None, disable_after_iter:int = None):
         super().__init__(disable_after_epoch)
         self.disable_after_iter = disable_after_iter
 
@@ -20,6 +20,8 @@ class DisableTrackSampleHook(DisableObjectSampleHook):
         Args:
             runner (Runner): The runner.
         """
+        if self.disable_after_epoch is None:
+            return
         epoch = runner.epoch
         train_loader = runner.train_dataloader
         model = runner.model
@@ -35,7 +37,7 @@ class DisableTrackSampleHook(DisableObjectSampleHook):
             for transform in dataset.pipeline.transforms:  # noqa: E501
                 if isinstance(transform, TrackSample):
                     assert hasattr(transform, 'disabled')
-                    transform.disabled = True
+                    GLOBAL_DISABLE_TRACK_SAMPLE.value = True
             # The dataset pipeline cannot be updated when persistent_workers
             # is True, so we need to force the dataloader's multi-process
             # restart. This is a very hacky approach.
@@ -64,16 +66,20 @@ class DisableTrackSampleHook(DisableObjectSampleHook):
         # TODO: refactor after mmengine using model wrapper
         if is_model_wrapper(model):
             model = model.module
+        print("iter", iter, "disable_after_iter", self.disable_after_iter)
         if iter == self.disable_after_iter:
             runner.logger.info('Disable ObjectSample')
             dataset = runner.train_dataloader.dataset
             # handle dataset wrapper
             if not isinstance(dataset, BaseDataset):
                 dataset = dataset.dataset
+            print(dataset.pipeline.transforms)
             for transform in dataset.pipeline.transforms:  # noqa: E501
                 if isinstance(transform, TrackSample):
                     assert hasattr(transform, 'disabled')
-                    transform.disabled = True
+                    GLOBAL_DISABLE_TRACK_SAMPLE.value = True
+                    print("TrackSample disabled")
+            print("TrackSample disabled", dataset.pipeline.transforms[3].disabled.value)
             # The dataset pipeline cannot be updated when persistent_workers
             # is True, so we need to force the dataloader's multi-process
             # restart. This is a very hacky approach.
