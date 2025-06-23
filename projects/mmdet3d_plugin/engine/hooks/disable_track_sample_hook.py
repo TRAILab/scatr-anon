@@ -66,20 +66,16 @@ class DisableTrackSampleHook(DisableObjectSampleHook):
         # TODO: refactor after mmengine using model wrapper
         if is_model_wrapper(model):
             model = model.module
-        print("iter", iter, "disable_after_iter", self.disable_after_iter)
         if iter == self.disable_after_iter:
             runner.logger.info('Disable ObjectSample')
             dataset = runner.train_dataloader.dataset
             # handle dataset wrapper
             if not isinstance(dataset, BaseDataset):
                 dataset = dataset.dataset
-            print(dataset.pipeline.transforms)
             for transform in dataset.pipeline.transforms:  # noqa: E501
                 if isinstance(transform, TrackSample):
                     assert hasattr(transform, 'disabled')
                     GLOBAL_DISABLE_TRACK_SAMPLE.value = True
-                    print("TrackSample disabled")
-            print("TrackSample disabled", dataset.pipeline.transforms[3].disabled.value)
             # The dataset pipeline cannot be updated when persistent_workers
             # is True, so we need to force the dataloader's multi-process
             # restart. This is a very hacky approach.

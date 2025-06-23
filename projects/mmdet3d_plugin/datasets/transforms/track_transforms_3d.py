@@ -261,7 +261,6 @@ class TrackSample(ObjectSample):
 
         if self.disabled.value or sampled_track_list is None:
             return input_dict
-        print("Running TrackSample transform", self.disabled)
 
         sampled_dict = self.db_sampler.sample_all(input_dict, sampled_track_list)
         if sampled_dict is None:
