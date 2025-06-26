@@ -43,9 +43,9 @@ CONTAINER_PATH=/workspace/$PROJECT_NAME # path to main workspace
 VOLUMES="--bind=$PROJ_DIR:$CONTAINER_PATH \
 --bind=$TMP_DATA_DIR:$CONTAINER_PATH/data/nuscenes \
 --bind=$OUT_DIR:$CONTAINER_PATH/work_dirs \
---bind=$WANDB_ARTIFACT_DIR:$CONTAINER_PATH/wandb_artifacts \
---bind=$WANDB_DATA_DIR:$CONTAINER_PATH/wandb_data \
---bind=$WANDB_CACHE_DIR:$CONTAINER_PATH/wandb_cache \
+--bind=$WANDB_ARTIFACT_DIR:$WANDB_ARTIFACT_DIR \
+--bind=$WANDB_DATA_DIR:$WANDB_DATA_DIR \
+--bind=$WANDB_CACHE_DIR:$WANDB_CACHE_DIR \
 --bind=$SLURM_TMPDIR:/tmp \
 --bind=$CKPT_DIR:$CONTAINER_PATH/ckpts
 "
@@ -60,9 +60,9 @@ CONTAINER_CMD="apptainer exec --nv -c -e --writable-tmpfs --pwd $CONTAINER_PATH 
 --env "CUDA_LAUNCH_BLOCKING=1"
 --env "TORCH_USE_CUDA_DSA=1"
 --env "TORCH_NCCL_ENABLE_MONITORING=0"
---env "WANDB_ARTIFACT_DIR=$CONTAINER_PATH/wandb_artifacts"
---env "WANDB_DATA_DIR=$CONTAINER_PATH/wandb_data"
---env "WANDB_CACHE_DIR=$CONTAINER_PATH/wandb_cache"
+--env "WANDB_ARTIFACT_DIR=$WANDB_ARTIFACT_DIR"
+--env "WANDB_DATA_DIR=$WANDB_DATA_DIR"
+--env "WANDB_CACHE_DIR=$WANDB_CACHE_DIR"
 $VOLUMES \
 $SING_IMG \
 $BASE_CMD
