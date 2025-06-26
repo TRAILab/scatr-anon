@@ -10,13 +10,16 @@ dist_params = dict(backend="nccl")
 log_level = "INFO"
 
 batch_size = 6
-num_gpus = 8
+num_gpus = 4
 total_batch_size = batch_size * num_gpus
-num_epochs = 20
-checkpoint_epoch_interval = 1
-val_epoch_interval = 1
+num_epochs = 60 # about 66000 iterations for 1x schedule with batch size 6 and 4 GPUs
+iters_per_epoch = 28130 // total_batch_size  # 28130 samples in nuscenes train set
+num_iters = iters_per_epoch * num_epochs  # 64000 iterations for 1x schedule with batch size 6 and 4 GPUs
+checkpoint_epoch_interval = 6
+val_epoch_interval = 6
+log_processor = dict(by_epoch=False)
 
-short_name = "lidar-8g-v1-900q-yespool"
+short_name = "apollo-lidar-4g-2group-qc-cbgsv2"
 init_pq_with_heatmap = False
 work_dir = f"work_dirs/sparse4dv3-temporal_lidar_1x{num_gpus}_bs{batch_size}-{num_epochs}e_{short_name}"
 
@@ -128,11 +131,6 @@ optim_wrapper = dict(
     # loss_scale=1.0,
     optimizer=dict(type="AdamW", lr=lr, weight_decay=0.001),
     clip_grad=dict(max_norm=25, norm_type=2, error_if_nonfinite=True),
-    paramwise_cfg=dict(
-        custom_keys={
-            "img_backbone": dict(lr_mult=0.5),
-        }
-    ),
 )
 
 # param_scheduler = [
@@ -153,53 +151,54 @@ param_scheduler = [
     dict(
         type='OneCycleLR',
         eta_max=lr,
-        total_steps=num_epochs,
+        total_steps=num_iters,
         pct_start=0.4,
         div_factor=25.0,
         final_div_factor=1e4,
-        by_epoch=True,
-        convert_to_iter_based=True
+        by_epoch=False,
+        # convert_to_iter_based=True
     ),
     # momentum scheduler
     # During the first 8 epochs, momentum increases from 0 to 0.85 / 0.95
     # during the next 12 epochs, momentum increases from 0.85 / 0.95 to 1
     dict(
         type="CosineAnnealingMomentum",
-        T_max=(0.4 * num_epochs),
+        T_max=int(0.4 * num_iters),
         eta_min=0.85 / 0.95,
         begin=0,
-        end=(0.4 * num_epochs),
-        by_epoch=True,
-        convert_to_iter_based=True),
+        end=int(0.4 * num_iters),
+        by_epoch=False,
+        ),
     dict(
         type="CosineAnnealingMomentum",
-        T_max=12,
+        T_max=num_iters,
         eta_min=1,
-        begin=(0.4 * num_epochs),
-        end=num_epochs,
-        by_epoch=True,
-        convert_to_iter_based=True)
+        begin=int(0.4 * num_iters),
+        end=num_iters,
+        by_epoch=False,
+    )
 ]
 
 # runtime settings
 train_cfg = dict(
-    by_epoch=True,
-    max_epochs=num_epochs,
-    val_interval=val_epoch_interval)
+    by_epoch=False,
+    max_iters=num_iters,
+    val_interval=val_epoch_interval * iters_per_epoch)
 val_cfg = dict()
 test_cfg = dict()
 
 default_hooks = dict(
-    checkpoint=dict(by_epoch=True,
-                    interval=checkpoint_epoch_interval),
-    logger=dict(interval=50)
+    checkpoint=dict(
+        by_epoch=False,
+        interval=iters_per_epoch * checkpoint_epoch_interval,),
+    logger=dict(interval=50, log_metric_by_epoch=False)
 )
 
 disable_ts_ratio = 0.75
 custom_hooks = [
     dict(
         type="DisableTrackSampleHook",
-        disable_after_epoch=int(num_epochs * disable_ts_ratio),
+        disable_after_iter=int(num_iters * disable_ts_ratio),
     ),
     # dict(
     #     type="ProfilerHook", 

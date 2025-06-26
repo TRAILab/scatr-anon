@@ -214,8 +214,9 @@ train_dataloader = dict(
     batch_sampler=dict(
         type='TrackSampler3D', 
         shuffle=True,
-        # clip_len=10, 
-        num_splits=2,
+        max_clip_len=10,
+        # clip_len=10,
+        # num_splits=2,
         seq_flip_prob=0.1, 
         use_CBGS=True
     ),

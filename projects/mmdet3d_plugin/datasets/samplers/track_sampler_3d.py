@@ -20,6 +20,7 @@ class TrackSampler3D(TrackImgSampler):
         drop_last: bool = False,
         seed: Optional[int] = None,
         shuffle: bool = True,
+        max_clip_len: Optional[int] = None,
         clip_len: Optional[int] = None,
         num_splits: Optional[int] = None,
         use_CBGS: bool = False,
@@ -58,13 +59,15 @@ class TrackSampler3D(TrackImgSampler):
         self.scene_indices = [self.dataset.get_scene_token_indices(
             scene_token) for scene_token in self.scene_tokens]
         self.group_indices = []
+        # Check that only one parameter is not None among clip_len, max_clip_len, and num_splits
+        non_none_params = sum(x is not None for x in [clip_len, max_clip_len, num_splits])
+        if non_none_params != 1:
+            raise ValueError(
+                f"Exactly one of clip_len, max_clip_len, or num_splits must be specified, "
+                f"but got {non_none_params} non-None parameters: "
+                f"clip_len={clip_len}, max_clip_len={max_clip_len}, num_splits={num_splits}"
+            )
 
-        assert (clip_len is not None) or (num_splits is not None), (
-            "Either clip_len or num_splits must be specified.")
-        
-        assert (clip_len is None) or (num_splits is None), (
-            "Only one of clip_len or num_splits can be specified.")
-        
         if num_splits is not None:
             assert num_splits > 0, f"num_splits must be greater than 0, but got {num_splits}"
             for scene_indices in self.scene_indices:
@@ -72,6 +75,15 @@ class TrackSampler3D(TrackImgSampler):
                 self.group_indices.extend(np.array_split(
                     scene_indices, num_splits))
             self.group_indices = [x.tolist() for x in self.group_indices]
+        elif max_clip_len is not None:
+            assert max_clip_len > 0, f"max_clip_len must be greater than 0, but got {max_clip_len}"
+            for scene_indices in self.scene_indices:
+                # split the sequence into clips of length max_clip_len
+                # intended to sample each frame an equal number of times
+                self.group_indices.extend(
+                    [scene_indices[max(start_ind, 0):min(start_ind + max_clip_len, len(scene_indices))]
+                     for start_ind in range(-max_clip_len + 1, len(scene_indices))]
+                )
         elif clip_len == 1:  # split the scenes into individual frames
             for scene_indices in self.scene_indices:
                 self.group_indices.extend(np.array_split(
@@ -92,44 +104,60 @@ class TrackSampler3D(TrackImgSampler):
             # self.group_indices = [x.tolist() for x in self.group_indices]
         self.classes = self.dataset.metainfo['classes']
         if use_CBGS:
+            print("Using CBGS sampling for TrackSampler3D")
+            print("Before CBGS, number of groups:", len(self.group_indices))
             self.group_indices = self.get_CBGS_sample_indices(
                 self.group_indices)
+            print("After CBGS, number of groups:", len(self.group_indices))
         self.num_groups = len(self.group_indices)
         assert self.num_groups >= self.global_batch_size, (
             f"only {self.num_groups} clips loaded but {self.world_size} gpus were given, each with a batch size of {self.batch_size}.")
-        
+        self.getting_len = True
         self.num_batches = len([x for x in self])  # length is dependent on world size and batch size, calculation too complex, brute force computation of length
+        self.getting_len = False
 
     def get_CBGS_sample_indices(self, group_indices):
-        class_sample_idxs = [[] for cat in self.classes]
+        cls_group_indices = [set() for cat in self.classes]
+
+        num_appearances = [0] * len(self.classes)
         # iterate through each group
-        for i, group_idxs_single in enumerate(group_indices):
+        for cls_idx, group_idxs_single in enumerate(group_indices):
             # get total categories present in the group
-            cat_ids = set()
             for sample_idx in group_idxs_single:  # iterate through each sample in the group
-                cat_ids = cat_ids.union(self.dataset.get_cat_ids(sample_idx))
-            # note group idx if it contains a given category
-            for cat_id in cat_ids:
-                if cat_id != -1:
-                    # Filter categories that do not need to be cared.
+                # cat_ids = cat_ids.union(self.dataset.get_cat_ids(sample_idx))
+                cat_ids = self.dataset.get_cat_ids(sample_idx)
+                for cat_ids in cat_ids:
                     # -1 indicates dontcare in MMDet3D.
-                    class_sample_idxs[cat_id].append(i)
+                    if cat_ids == -1:
+                        continue
+                    num_appearances[cat_ids] += 1
+                    cls_group_indices[cat_ids].add(cls_idx)
+        # compute total number of frames in each class sample
+        num_frames = []
+        for cls_idx, cls_group_idxs in enumerate(cls_group_indices):
+            num_frames.append(sum(
+                [len(self.group_indices[x]) for x in cls_group_idxs]))
+        cls_appear_ratio = [
+            num_appearances[i] / num_frames[i] if num_frames[i] > 0 else 0
+            for i in range(len(self.classes))]
+
         # calculate the distribution of each class in all groups
-        duplicated_samples = sum([len(v) for v in class_sample_idxs])
-        class_distribution = [
-            max(1, len(v)) / duplicated_samples for v in class_sample_idxs]
+        total_frames = sum(num_frames)
+        class_distribution = [max(1, v) / total_frames for v in num_frames]
 
         balanced_group_indices = []
         frac = 1.0 / len(self.classes)
         ratios = [frac / v for v in class_distribution]
         rng = np.random.default_rng(self.seed)
-        for cls_inds, ratio in zip(class_sample_idxs, ratios):
-            while ratio > 1:
-                balanced_group_indices += cls_inds
-                ratio -= 1
+        for cls_idx, (group_inds, ratio) in enumerate(zip(cls_group_indices, ratios)):
+            while ratio > cls_appear_ratio[cls_idx]:
+                balanced_group_indices.extend(list(group_inds))
+                ratio -= cls_appear_ratio[cls_idx]
             if ratio < 1 and ratio > 0:
                 balanced_group_indices += rng.choice(
-                    cls_inds, int(len(cls_inds) * ratio), replace=False).tolist()
+                    list(group_inds), 
+                    int(len(group_inds) * ratio), 
+                    replace=False).tolist()
 
         balanced_group_indices = [copy.deepcopy(group_indices[i])
                                   for i in balanced_group_indices]
@@ -200,7 +228,10 @@ class TrackSampler3D(TrackImgSampler):
                     if np.random.uniform() < self.seq_flip_prob:
                         # flip the sequence
                         next_group = next_group[::-1]
-                    group_aug = self.dataset.get_augmentation(next_group)
+                    if not self.getting_len:
+                        group_aug = self.dataset.get_augmentation(next_group)
+                    else:
+                        group_aug = [None] * len(next_group)
                     active_groups[batch_idx] = [
                         {
                             "index": index,
