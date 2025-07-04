@@ -9,20 +9,23 @@ plugin_dir = "projects/mmdet3d_plugin/"
 dist_params = dict(backend="nccl")
 log_level = "INFO"
 
-batch_size = 6
-num_gpus = 8
+batch_size = 4
+num_gpus = 4
 total_batch_size = batch_size * num_gpus
 input_shape = (704, 256)
-num_epochs = 12
-checkpoint_epoch_interval = 1
-val_epoch_interval = 1
+num_epochs = 60 # about 66000 iterations for 1x schedule with batch size 6 and 4 GPUs
+iters_per_epoch = 28130 // total_batch_size  # 28130 samples in nuscenes train set
+num_iters = iters_per_epoch * num_epochs  # 64000 iterations for 1x schedule with batch size 6 and 4 GPUs
+checkpoint_epoch_interval = 6
+val_epoch_interval = 6
+log_processor = dict(by_epoch=False)
 
-short_name = "baseline"
+short_name = "wacv_v2-apollo-4g-cam_baseline"
 work_dir = f"work_dirs/sparse4dv3_temporal_r50_1x{num_gpus}_bs{batch_size}_{input_shape[1]}x{input_shape[0]}-{num_epochs}e_{short_name}"
 
 load_from = None
 # load_from = "ckpts/sparse4dv3_r50.pth"
-resume_from = None
+# resume_from = None
 
 tracking_test = True
 class_names = [
@@ -43,10 +46,23 @@ strides = [4, 8, 16, 32]
 num_levels = len(strides)
 num_depth_layers = 3
 
+init_pq_with_heatmap = False  # whether to initialize PQ with heatmap
 model = dict(
     img_neck=dict(num_outs=num_levels),
     depth_branch=dict(num_depth_layers=num_depth_layers),
     pts_bbox_head=dict(
+        instance_bank=dict(
+            class_names=class_names,
+            num_anchor=900,
+            anchor="_nuscenes_kmeans900.npy",
+            num_temp_instances=600,
+            dataset_name={{_base_.dataset_type}},
+            feat_pool=False,
+            num_learned_groups=2,
+            num_learned_temp_groups=2,
+            group_selection=["topk", "random"],
+            heatmap_init=init_pq_with_heatmap,
+        ),
         deformable_model=dict(
             num_levels=num_levels
         ),
@@ -54,6 +70,8 @@ model = dict(
             num_cls={{_base_.num_classes}},
         ),
         sampler=dict(
+            feat_pool=False,
+            second_chance_tq=True,
             cls_wise_reg_weights={
                 class_names.index("traffic_cone"): [
                     2.0,
@@ -172,16 +190,17 @@ param_scheduler = [
 
 # runtime settings
 train_cfg = dict(
-    by_epoch=True,
-    max_epochs=num_epochs,
-    val_interval=val_epoch_interval)
+    by_epoch=False,
+    max_iters=num_iters,
+    val_interval=val_epoch_interval * iters_per_epoch)
 val_cfg = dict()
 test_cfg = dict()
 
 default_hooks = dict(
-    checkpoint=dict(by_epoch=True,
-                    interval=checkpoint_epoch_interval),
-    logger=dict(interval=50)
+    checkpoint=dict(
+        by_epoch=False,
+        interval=iters_per_epoch * checkpoint_epoch_interval,),
+    logger=dict(interval=50, log_metric_by_epoch=False)
 )
 
 vis_backends = [
@@ -191,7 +210,7 @@ vis_backends = [
         type='WandbVisBackend',
         init_kwargs=dict(
             entity="trailab",
-            project="Sparse4Dv3-Lidar",
+            project="Sparse4Dv3-Cam",
             name=short_name,),
     )
 ]

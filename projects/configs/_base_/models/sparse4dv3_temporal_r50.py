@@ -1,6 +1,10 @@
 use_deformable_func = True
 embed_dims = 256
-num_groups = 8
+num_heads = 8
+num_learned_groups = 2
+num_learned_temp_groups = 2
+num_dn_groups = 6
+num_temp_dn_groups = 3
 num_decoder = 6
 num_single_frame_decoder = 1
 decouple_attn = True
@@ -8,11 +12,16 @@ temporal = True
 drop_out = 0.1
 with_quality_estimation = True
 tracking_threshold = 0.2
+multistage_heatmap = 1  # 1 for LiDAR, 2 for fusion, False for no heatmap init
+init_pq_with_heatmap = False
 
+feat_pool = True
+dup_pq_groups = True
 
 model = dict(
     type="Sparse4D",
     use_grid_mask=True,
+    freeze_img=False,
     use_deformable_func=use_deformable_func,
     img_backbone=dict(
         type="mmdet.ResNet",
@@ -50,12 +59,23 @@ model = dict(
         instance_bank=dict(
             type="InstanceBank",
             num_anchor=900,
+            num_learned_groups=num_learned_groups,
+            num_learned_temp_groups=num_learned_temp_groups,
+            group_selection=['topk', 'random'],
             embed_dims=embed_dims,
             anchor="_nuscenes_kmeans900.npy",
             anchor_handler=dict(type="SparseBox3DKeyPointsGenerator"),
             num_temp_instances=600 if temporal else -1,
             confidence_decay=0.6,
-            feat_grad=False,
+            feat_grad=True,  # true for multiple learned groups
+            # heatmap init params
+            heatmap_init=init_pq_with_heatmap,
+            num_heatmap_stages=multistage_heatmap,
+            xy_size=(180, 180),
+            nms_kernel_size=3,
+            num_bbox_pool_points=7,
+            feat_pool=feat_pool,
+            dup_pq_groups=dup_pq_groups,
         ),
         anchor_encoder=dict(
             type="SparseBox3DEncoder",
@@ -91,7 +111,7 @@ model = dict(
         temp_graph_model=dict(
             type="MultiheadAttention",
             embed_dims=embed_dims if not decouple_attn else embed_dims * 2,
-            num_heads=num_groups,
+            num_heads=num_heads,
             batch_first=True,
             dropout=drop_out,
         )
@@ -100,7 +120,7 @@ model = dict(
         graph_model=dict(
             type="MultiheadAttention",
             embed_dims=embed_dims if not decouple_attn else embed_dims * 2,
-            num_heads=num_groups,
+            num_heads=num_heads,
             batch_first=True,
             dropout=drop_out,
         ),
@@ -118,7 +138,7 @@ model = dict(
         deformable_model=dict(
             type="DeformableFeatureAggregation",
             embed_dims=embed_dims,
-            num_groups=num_groups,
+            num_groups=num_heads,
             num_cams=6,
             attn_drop=0.15,
             use_deformable_func=use_deformable_func,
@@ -146,14 +166,16 @@ model = dict(
         ),
         sampler=dict(
             type="SparseBox3DTarget",
-            num_dn_groups=5,
-            num_temp_dn_groups=3,
+            num_dn_groups=num_dn_groups,
+            num_temp_dn_groups=num_temp_dn_groups,
             dn_noise_scale=[2.0] * 3 + [0.5] * 7,
             max_dn_gt=32,
             add_neg_dn=True,
             cls_weight=2.0,
             box_weight=0.25,
             reg_weights=[2.0] * 3 + [0.5] * 3 + [0.0] * 4,
+            feat_pool=feat_pool,
+            second_chance_tq=True
         ),
         loss_cls=dict(
             type="mmdet.FocalLoss",
@@ -168,6 +190,15 @@ model = dict(
             loss_centerness=dict(
                 type="mmdet.CrossEntropyLoss", use_sigmoid=True),
             loss_yawness=dict(type="mmdet.GaussianFocalLoss"),
+        ),
+        loss_heatmap=dict(
+            type='mmdet.GaussianFocalLoss',
+            reduction='mean',
+            loss_weight=1.0,
+        ),
+        loss_heatmap_reg=dict(
+            type="mmdet.L1Loss",
+            loss_weight=0.25
         ),
         decoder=dict(type="SparseBox3DDecoder",
                      score_threshold=tracking_threshold),

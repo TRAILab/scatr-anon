@@ -79,7 +79,7 @@ class Sparse4D(MVXTwoStageDetector):
                 self.img_neck.eval()
                 for param in self.img_neck.parameters():
                     param.requires_grad = False
-            if freeze_camlss and hasattr(self.pts_fusion_layer, 'cam_lss'):
+            if self.with_pts_fusion_layer and freeze_camlss and hasattr(self.pts_fusion_layer, 'cam_lss'):
                 self.pts_fusion_layer.cam_lss.eval()
                 for param in self.pts_fusion_layer.cam_lss.parameters():
                     param.requires_grad = False
@@ -89,9 +89,16 @@ class Sparse4D(MVXTwoStageDetector):
             for param in self.pts_fusion_layer.parameters():
                 param.requires_grad = False
 
-    def extract_img_feat(self, img: Optional[Tensor], return_depth: bool = False, batch_input_metas=None):
-        img_feat = super().extract_img_feat(img, batch_input_metas)
-        return img_feat, None
+    def extract_img_feat(self, batch_inputs_dict, return_depth: bool = False, batch_input_metas=None):
+        """
+        NOTE: when using dataset preprocessor, the input key is 'imgs'.
+        When not using dataset preprocessor (cam only), the input key is 'img'.
+        """
+        if self.with_pts_voxel_encoder: # use simple feat extraction for LC fusion
+            img = batch_inputs_dict.get('imgs', None)
+            img_feat = super().extract_img_feat(img, batch_input_metas)
+            return img_feat, None
+        img = batch_inputs_dict.get('img', None)
         if img is None:
             return None, None
         focal = torch.tensor([
@@ -128,9 +135,8 @@ class Sparse4D(MVXTwoStageDetector):
     def extract_feat(self, batch_inputs_dict: Dict, batch_input_metas: List[Dict]):
         # img feature extraction
         # output of preprocessor is imgs
-        batch_img = batch_inputs_dict.get("imgs", None)
         feature_maps, depths = self.extract_img_feat(
-            batch_img,
+            batch_inputs_dict,
             return_depth=self.training,
             batch_input_metas=batch_input_metas,)
 

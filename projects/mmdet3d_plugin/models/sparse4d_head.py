@@ -219,7 +219,7 @@ class Sparse4DHead(BaseModule):
         if isinstance(feature_maps, torch.Tensor):
             feature_maps = [feature_maps]
         if self.use_camera:
-            batch_size = feature_maps[0].shape[0]
+            batch_size = len(batch_data_samples)
             multistage_feats = None
             bev_pos_1 = None
             multiscale_inputs = None
@@ -444,7 +444,7 @@ class Sparse4DHead(BaseModule):
                 )
                 # reshape back to batch x num_learned_grp x num_instance x embed_dim
                 instance_feature = instance_feature_flattened.view(
-                    batch_size, num_learned_grp, -1, instance_feature.shape[-1])
+                    batch_size, num_learned_grp, -1, instance_feature_flattened.shape[-1])
             elif op == "deformable_lidar":
                 # flatten along the num groups and num queries
                 instance_feature_flattened = instance_feature.flatten(1, 2)
@@ -473,7 +473,7 @@ class Sparse4DHead(BaseModule):
 
                 # reshape back to batch x num_learned_grp x num_instance x embed_dim
                 deformable_output = deform_out_flattened.view(
-                    batch_size, num_learned_grp, -1, instance_feature.shape[-1])
+                    batch_size, num_learned_grp, -1, deform_out_flattened.shape[-1])
 
                 # follow DeformableFeatureAggregation, concat the output
                 instance_feature = torch.cat(
