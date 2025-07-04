@@ -808,6 +808,17 @@ class Sparse4DHead(BaseModule):
                 for prev_instance_inds_i in prev_instance_inds # iterate over batch
             ]
 
+        nb_mask = torch.stack([
+            torch.stack([
+                ~torch.isin(tgt_ids, prev_ids) & (tgt_ids!=UNTRACKED_ID) 
+                for tgt_ids, prev_ids in zip(id_tgt_i, prev_instance_inds_i)
+            ]) # iterate through group
+            for (id_tgt_i, prev_instance_inds_i) in zip(id_target, prev_instance_inds_list) # iterate through batch
+        ])
+        metric_dict = dict(
+            nb_tp_conf=conf[nb_mask].nanmean(),
+        )
+
         # Create a mask for which pq were in prev frame, (bs, num_temp_instances)
         prev_pq_mask = torch.stack([
             # iterate through group
@@ -828,7 +839,7 @@ class Sparse4DHead(BaseModule):
         pq_fp = pos_pq_mask.sum() - pq_tp
 
         # pq_fn: a newborn gt that was assigned to a tq, not a hinderance to query consistency, ignore
-        metric_dict = dict(
+        metric_dict.update(
             pq_tp_conf=pq_conf[newborn_mask].nanmean(),
             pq_fp_conf=pq_conf[pos_pq_mask & prev_pq_mask].nanmean(),
             pq_neg_conf=pq_conf[~pos_pq_mask].nanmean(),
