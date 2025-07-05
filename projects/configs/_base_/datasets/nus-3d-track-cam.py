@@ -75,6 +75,46 @@ train_pipeline = [
                    ],
     ),
 ]
+
+# pass targets during val to compute losses/metrics
+val_pipeline = [
+    dict(type="LoadMultiViewImageFromFiles", to_float32=True),
+    dict(
+        type="LoadPointsFromFile",
+        coord_type="LIDAR",
+        load_dim=5,
+        use_dim=5,
+        backend_args=backend_args,
+    ),
+    dict(
+        type='TrackLoadAnnotations3D',
+        with_bbox_3d=True,
+        with_label_3d=True,
+        with_attr_label=False,
+        with_forecasting=False),
+    dict(type="ResizeCropFlipImage"),
+    dict(
+        type="MultiScaleDepthMapGenerator",
+        downsample=strides[:num_depth_layers],
+    ),
+    dict(type="NormalizeMultiviewImage", **img_norm_cfg),
+    dict(
+        type="Pack3DTrackInputs",
+        keys=[
+            "img",
+            "lidar2img",
+            "img_shape",
+            "gt_bboxes_3d",
+            "gt_labels_3d",
+            "instance_inds"
+        ],
+        meta_keys=["lidar2global", "timestamp", "intrinsics",
+                   "lidar2img", "img_shape", "sample_idx", "scene_token",
+                   "gt_depth"  # put depth in meta-keys since it doesn't stack easily into input or gt target structures
+                   ],
+    ),
+]
+
 test_pipeline = [
     dict(type="LoadMultiViewImageFromFiles", to_float32=True),
     dict(type="ResizeCropFlipImage"),
@@ -147,8 +187,15 @@ train_dataloader = dict(
     num_workers=16,
     persistent_workers=True,
     sampler=dict(type='DefaultSampler'),
-    batch_sampler=dict(type='TrackSampler3D', shuffle=True,
-                       clip_len=10, seq_flip_prob=0.1, use_CBGS=False),
+        batch_sampler=dict(
+        type='TrackSampler3D', 
+        shuffle=True,
+        max_clip_len=10,
+        # clip_len=10,
+        # num_splits=2,
+        seq_flip_prob=0.1, 
+        use_CBGS=True
+    ),
     collate_fn=dict(type='default_collate'),
     dataset=dict(
         **data_basic_config,
@@ -171,9 +218,11 @@ val_dataloader = dict(
     dataset=dict(
         **data_basic_config,
         ann_file=val_pkl_path,
-        pipeline=test_pipeline,
+        pipeline=val_pipeline,
         data_aug_conf=data_aug_conf,
-        test_mode=True,
+        test_mode=False,
+        verbose=True,
+        filter_empty_gt=False,
     )
 )
 test_dataloader = val_dataloader
