@@ -226,7 +226,7 @@ vis_backends = [
         save_dir=work_dir,
         init_kwargs=dict(
             entity="trailab",
-            project="Sparse4Dv3-Lidar",
+            project="Sparse4Dv3-LC",
             name=short_name,
         )
     )
