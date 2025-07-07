@@ -986,3 +986,9 @@ class Sparse4DHead(BaseModule):
             model_outs.get("quality"),
             output_idx=output_idx,
         )
+
+    def disable_group_aug(self):
+        """
+        Disable group augmentation, i.e. use only the first group for training
+        """
+        self.instance_bank.disable_group_aug()

@@ -152,6 +152,7 @@ class InstanceBank(nn.Module):
         ), f"All entries in group_selection must be in {supported_group_selection} or a float between 0 and 1"
         assert group_selection[0] == 'topk', "First group selection must be 'topk'."
         self.group_selection = group_selection
+        self.disabled_group_aug = False
         self.reset()
 
         # FocalFormer3D heatmap init params
@@ -606,6 +607,12 @@ class InstanceBank(nn.Module):
         )
 
     def update(self, instance_feature, anchor, cls):
+        """
+        Update set of queries with proposal queries from prev timestep.
+        Take top-k PQ instances
+        Account for certain samples in the batch being start of new seq
+        Account for randomizing which aug groups propagated vs stopped
+        """
         if self.cached_feature is None or self.cached_feature.shape[1] != instance_feature.shape[1]:
             # no cached instances or different number of groups (training to inference)
             # TODO handle the inference case more elegantly
@@ -790,3 +797,16 @@ class InstanceBank(nn.Module):
             (0, self.num_anchor - self.num_temp_instances),
             value=UNTRACKED_ID,
         )
+
+    def disable_group_aug(self):
+        """
+        Disable group augmentation, i.e. only use the first group for inference.
+        """
+        self.disabled_group_aug = True
+        self.group_selection = ['topk']
+        self.num_learned_groups = 1
+        self.num_learned_temp_groups = 1
+        self.cached_feature = self.cached_feature[:, 0:1]
+        self.cached_anchor = self.cached_anchor[:, 0:1]
+        self.cached_confidence = self.cached_confidence[:, 0:1]
+        self.cached_indices = self.cached_indices[:, 0:1]

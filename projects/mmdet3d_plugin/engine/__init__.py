@@ -1,3 +1,3 @@
-from .hooks import DisableTrackSampleHook
+from .hooks import DisableTrackSampleHook, DisableGroupAugHook
 
-__all__ = ["DisableTrackSampleHook"]
+__all__ = ["DisableTrackSampleHook", "DisableGroupAugHook"]
