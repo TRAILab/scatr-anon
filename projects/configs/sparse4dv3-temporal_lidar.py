@@ -195,16 +195,16 @@ default_hooks = dict(
 )
 
 disable_ts_ratio = 0.75
-disable_ga_ratio = 0.75
+# disable_ga_ratio = 0.75
 custom_hooks = [
     dict(
         type="DisableTrackSampleHook",
         disable_after_iter=int(num_iters * disable_ts_ratio),
     ),
-    dict(
-        type="DisableGroupAugHook",
-        disable_after_iter=int(num_iters * disable_ga_ratio),
-    )
+    # dict(
+    #     type="DisableGroupAugHook",
+    #     disable_after_iter=int(num_iters * disable_ga_ratio),
+    # )
     # dict(
     #     type="ProfilerHook", 
     #     activity_with_cpu=True, 

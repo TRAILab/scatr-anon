@@ -13,6 +13,10 @@ class DisableGroupAugHook(Hook):
     """
 
     def __init__(self, disable_after_epoch: Optional[int] = None, disable_after_iter: Optional[int] = None):
+        raise NotImplementedError(
+            "This hook is not implemented yet. Breaks when used in distributed training. need to validate how to " \
+            "disable group augmentations in distributed training properly."
+        )
         self.disable_after_epoch = disable_after_epoch
         self.disable_after_iter = disable_after_iter
         assert disable_after_epoch is not None or disable_after_iter is not None, \
