@@ -19,7 +19,7 @@ checkpoint_epoch_interval = 6
 val_epoch_interval = 6
 log_processor = dict(by_epoch=False)
 
-short_name = "wacv_v2-narval-4g-3group"
+short_name = "wacv_v2-narval-4g-3group_no_feat_pool"
 init_pq_with_heatmap = False
 work_dir = f"work_dirs/sparse4dv3-temporal_lidar_1x{num_gpus}_bs{batch_size}-{num_epochs}e_{short_name}"
 
