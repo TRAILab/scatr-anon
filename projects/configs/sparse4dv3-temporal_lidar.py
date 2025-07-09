@@ -19,7 +19,7 @@ checkpoint_epoch_interval = 6
 val_epoch_interval = 6
 log_processor = dict(by_epoch=False)
 
-short_name = "apollo-lidar-4g-2group-qc-cbgsv2"
+short_name = "wacv_v2-narval-4g-3group"
 init_pq_with_heatmap = False
 work_dir = f"work_dirs/sparse4dv3-temporal_lidar_1x{num_gpus}_bs{batch_size}-{num_epochs}e_{short_name}"
 
@@ -65,10 +65,10 @@ model = dict(
             anchor="_nuscenes_kmeans900.npy",
             num_temp_instances=600,
             dataset_name={{_base_.dataset_type}},
-            feat_pool=True,
-            num_learned_groups=2,
-            num_learned_temp_groups=2,
-            group_selection=["topk", "random"],
+            feat_pool=False,
+            num_learned_groups=3,
+            num_learned_temp_groups=3,
+            group_selection=["topk", "random", "random"],
             heatmap_init=init_pq_with_heatmap,
         ),
         anchor_encoder=dict(
@@ -79,7 +79,7 @@ model = dict(
             num_cls={{_base_.num_classes}}, # from dataset
         ),
         sampler=dict(
-            feat_pool=True,
+            feat_pool=False,
             second_chance_tq=True,
             supervise_qc=True,
             cls_wise_reg_weights={
