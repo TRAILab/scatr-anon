@@ -1,4 +1,3 @@
-# Copyright (c) Horizon Robotics. All rights reserved.
 from typing import Dict, List, Optional, Union
 
 import torch
