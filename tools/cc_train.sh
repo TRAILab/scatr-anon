@@ -1,11 +1,9 @@
 #!/bin/bash
 #SBATCH --array=1-1%1     # Step size of 2, 1,3,5,7
-#SBATCH --job-name=sparse4d-L-baseline    # Job name
-#SBATCH --account=rrg-swasland
+#SBATCH --job-name=scatr-L-baseline    # Job name
 #SBATCH --ntasks=1                    # number of MPI processes
 #SBATCH --mem=256G                     # Job CPU memory request
 #SBATCH --time=60:00:00               # Time limit hrs:min:sec
-#SBATCH --output=/home/cheongb2/projects/rrg-swasland/cheongb2/job_artifacts/Sparse4D-L/slurm_logs/%x-%j.log   # Standard output and error log
 #SBATCH --cpus-per-task=32
 #SBATCH --gres=gpu:a100:4           # gpu:t4:4 (graham) or gpu:a100:1 (narval)
 #SBATCH --mail-user="g1j5i4u0v5b4y4x4@trail-utias.slack.com"
@@ -24,12 +22,7 @@ NUM_GPUS=4
 HOME_DIR=/home/$USER
 TMP_DATA_DIR=$SLURM_TMPDIR/data
 # TMP_DATA_DIR=/home/$USER/scratch/temp_data # Slurm unzip alternative
-PROJ_DIR=$HOME_DIR/repos/Sparse4D-LiDAR-mirror
-OUT_DIR=$HOME_DIR/projects/rrg-swasland/$USER/job_artifacts/Sparse4D-L/work_dirs/
-SING_IMG=/home/$USER/projects/rrg-swasland/$USER/singularity/sparse4d-lidar-apptainer-0223.sif
-DATA_DIR=/home/$USER/projects/rrg-swasland/$USER/nuscenes # use a symlink to the actual data, may be different on each server
-PKL_DIR=/home/$USER/projects/rrg-swasland/$USER/nuscenes_pkls/sparse4dL
-CKPT_DIR=/home/$USER/projects/rrg-swasland/$USER/ckpts/sparse4d
+PROJ_DIR=$HOME_DIR/repos/SCATr-LiDAR-mirror
 
 mkdir -p $OUT_DIR
 mkdir -p $WANDB_ARTIFACT_DIR
@@ -38,7 +31,7 @@ mkdir -p $WANDB_CACHE_DIR
 
 # Container paths
 # THERE SHOULD BE NO SPACES AFTER THE \
-PROJECT_NAME=sparse4d-l
+PROJECT_NAME=scatr
 CONTAINER_PATH=/workspace/$PROJECT_NAME # path to main workspace
 VOLUMES="--bind=$PROJ_DIR:$CONTAINER_PATH \
 --bind=$TMP_DATA_DIR:$CONTAINER_PATH/data/nuscenes \
@@ -49,7 +42,7 @@ VOLUMES="--bind=$PROJ_DIR:$CONTAINER_PATH \
 --bind=$SLURM_TMPDIR:/tmp \
 --bind=$CKPT_DIR:$CONTAINER_PATH/ckpts
 "
-CFG_FILE=projects/configs/sparse4dv3-temporal_lidar.py
+CFG_FILE=projects/configs/scatr-temporal_lidar.py
 
 # Command
 WANDB_MODE='offline'
@@ -81,8 +74,8 @@ mkdir $TMP_DATA_DIR
 if [ "$DATASET" = "nuscenes_mini" ]; then
     nuscenes_zips=()
     nuscenes_pkls=(
-        "nuscenes_sparse4d_mmlabv2_11-18_mini_infos_train.pkl" \
-        "nuscenes_sparse4d_mmlabv2_11-18_mini_infos_val.pkl" \
+        "nuscenes_scatr_mmlabv2_11-18_mini_infos_train.pkl" \
+        "nuscenes_scatr_mmlabv2_11-18_mini_infos_val.pkl" \
         "nuscenes_track_dbinfos_train.pkl"
     )
     nuscenes_tgz=(
@@ -93,8 +86,8 @@ fi
 if [ "$DATASET" = "nuscenes" ]; then
     nuscenes_zips=("sweeps.zip" "samples.zip" "v1.0-trainval.zip" "lidarseg.zip" "maps.zip")
     nuscenes_pkls=(
-        "nuscenes_sparse4d_mmlabv2_11-06_infos_train.pkl" \
-        "nuscenes_sparse4d_mmlabv2_11-06_infos_val.pkl" \
+        "nuscenes_scatr_mmlabv2_11-06_infos_train.pkl" \
+        "nuscenes_scatr_mmlabv2_11-06_infos_val.pkl" \
         "nuscenes_track_dbinfos_train.pkl")
     nuscenes_tgz=(
         "nuscenes_track_gt_database.tar.gz"

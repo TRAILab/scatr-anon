@@ -71,6 +71,6 @@ RUN pip install "mmengine==0.10.5" "mmcv==2.1.0" "mmdet==3.2.0" "mmdet3d==1.4.0"
 # install spconv
 RUN pip install spconv-cu124 'numpy<2'
 
-WORKDIR /workspace/sparse4d-lidar
-ENV PYTHONPATH="/workspace/sparse4d-lidar:${PYTHONPATH}"
-RUN git config --global --add safe.directory /workspace/sparse4d-lidar
+WORKDIR /workspace/scatr
+ENV PYTHONPATH="/workspace/scatr:${PYTHONPATH}"
+RUN git config --global --add safe.directory /workspace/scatr

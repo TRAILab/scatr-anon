@@ -55,55 +55,6 @@ class MultiScaleDepthMapGenerator(object):
 
 
 @PIPELINES.register_module()
-class NuScenesSparse4DAdaptor(object):
-    def __init(self):
-        pass
-
-    def __call__(self, input_dict):
-        input_dict["projection_mat"] = np.float32(
-            np.stack(input_dict["lidar2img"])
-        )
-        input_dict["image_wh"] = np.ascontiguousarray(
-            np.array(input_dict["img_shape"], dtype=np.float32)[:, :2][:, ::-1]
-        )
-        input_dict["T_global_inv"] = np.linalg.inv(input_dict["lidar2global"])
-        input_dict["T_global"] = input_dict["lidar2global"]
-        if "cam_intrinsic" in input_dict:
-            input_dict["cam_intrinsic"] = np.float32(
-                np.stack(input_dict["cam_intrinsic"])
-            )
-            input_dict["focal"] = input_dict["cam_intrinsic"][..., 0, 0]
-            # input_dict["focal"] = np.sqrt(
-            #     np.abs(np.linalg.det(input_dict["cam_intrinsic"][:, :2, :2]))
-            # )
-        if "instance_inds" in input_dict:
-            input_dict["instance_id"] = input_dict["instance_inds"]
-
-        if "gt_bboxes_3d" in input_dict:
-            input_dict["gt_bboxes_3d"][:, 6] = self.limit_period(
-                input_dict["gt_bboxes_3d"][:, 6], offset=0.5, period=2 * np.pi
-            )
-            input_dict["gt_bboxes_3d"] = DC(
-                (input_dict["gt_bboxes_3d"])
-            ).to_tensor().float()
-        if "gt_labels_3d" in input_dict:
-            input_dict["gt_labels_3d"] = DC(
-                (input_dict["gt_labels_3d"])
-            ).to_tensor().long()
-
-        imgs = [img.transpose(2, 0, 1) for img in input_dict["img"]]
-        imgs = np.ascontiguousarray(np.stack(imgs, axis=0))
-        input_dict["img"] = DC(imgs).to_tensor()
-        return input_dict
-
-    def limit_period(
-        self, val: np.ndarray, offset: float = 0.5, period: float = np.pi
-    ) -> np.ndarray:
-        limited_val = val - np.floor(val / period + offset) * period
-        return limited_val
-
-
-@PIPELINES.register_module()
 class InstanceNameFilter(object):
     """Filter GT objects by their names.
 

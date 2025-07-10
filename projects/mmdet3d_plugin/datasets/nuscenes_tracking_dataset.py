@@ -1,13 +1,3 @@
-# ------------------------------------------------------------------------
-# Copyright (c) 2023 toyota research instutute.
-# ------------------------------------------------------------------------
-# Modified from DETR3D (https://github.com/WangYueFt/detr3d)
-# Copyright (c) 2021 Wang, Yue
-# ------------------------------------------------------------------------
-# Modified from mmdetection3d (https://github.com/open-mmlab/mmdetection3d)
-# Copyright (c) OpenMMLab. All rights reserved.
-# ------------------------------------------------------------------------
-
 import copy
 from typing import List, Union
 
@@ -54,7 +44,7 @@ class NuScenesTrackingDataset(NuScenesDataset):
             self.final_dim = (fW, fH)
             self.resize = max(fW/W, fH/H)
             self.resize_dims = (int(W * self.resize), int(H * self.resize))
-            self.bot_pct_lim = self.data_aug_conf.pop("bot_pct_lim") # set to (0,0) by Sparse4D, doesn't matter?
+            self.bot_pct_lim = self.data_aug_conf.pop("bot_pct_lim")
 
         if self.test_mode and self.data_aug_conf != {}:
             print_log(
@@ -68,7 +58,6 @@ class NuScenesTrackingDataset(NuScenesDataset):
 
     def get_augmentation(self, clip_inds: List[int]):
         """
-        Imported from Sparse4Dv3
         (TODO) move the generation of aug parameters into a method from the transform.
         Figure out some way to avoid hard coding the transform keys for error robustness
         """

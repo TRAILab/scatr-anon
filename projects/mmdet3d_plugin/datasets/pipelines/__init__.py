@@ -2,7 +2,6 @@ from .transform import (
     InstanceNameFilter,
     CircleObjectRangeFilter,
     NormalizeMultiviewImage,
-    NuScenesSparse4DAdaptor,
     MultiScaleDepthMapGenerator,
 )
 from .augment import (
@@ -21,7 +20,6 @@ __all__ = [
     "MultiScaleDepthMapGenerator",
     "NormalizeMultiviewImage",
     "PhotoMetricDistortionMultiViewImage",
-    "NuScenesSparse4DAdaptor",
     "TrackLoadAnnotations3D",
     "Pack3DTrackInputs",
 ]

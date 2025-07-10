@@ -21,11 +21,11 @@ except:
 from projects.mmdet3d_plugin.utils.misc import hash_array  # debug tools
 from projects.mmdet3d_plugin.utils.misc import hash_tensor
 
-__all__ = ["Sparse4D"]
+__all__ = ["SCATr"]
 
 
 @MODELS.register_module()
-class Sparse4D(MVXTwoStageDetector):
+class SCATr(MVXTwoStageDetector):
     def __init__(
         self,
         use_grid_mask: bool = True,
@@ -37,7 +37,7 @@ class Sparse4D(MVXTwoStageDetector):
         freeze_fusion: bool = False,
         **kwargs
     ):
-        super(Sparse4D, self).__init__(**kwargs)
+        super(SCATr, self).__init__(**kwargs)
         self.use_grid_mask = use_grid_mask
         if use_deformable_func:
             assert DAF_VALID, "deformable_aggregation needs to be set up."
@@ -113,7 +113,6 @@ class Sparse4D(MVXTwoStageDetector):
         if self.use_grid_mask:
             img = self.grid_mask(img)
         if "metas" in signature(self.img_backbone.forward).parameters:
-            # residual code from original Sparse4D
             raise NotImplementedError("metas is not supported.")
             feature_maps = self.img_backbone(img, num_cams, metas=metas)
         else:

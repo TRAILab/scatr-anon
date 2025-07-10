@@ -15,11 +15,11 @@ from projects.mmdet3d_plugin.models.utils.utils import (
 
 from .constants import NEG_DN_CLS_TARGET, PAD_CLS_TARGET, UNTRACKED_ID
 
-__all__ = ["Sparse4DHead"]
+__all__ = ["SCATrHead"]
 
 
 @MODELS.register_module()
-class Sparse4DHead(BaseModule):
+class SCATrHead(BaseModule):
     def __init__(
         self,
         instance_bank: dict,
@@ -34,7 +34,6 @@ class Sparse4DHead(BaseModule):
         modality: str = "camera",
         use_bevpos_emb: bool = True,
         xy_size: tuple = (180, 180),
-        # sparse4d params
         num_decoder: int = 6,
         num_single_frame_decoder: int = -1,
         temp_graph_model: Optional[Dict] = None,
@@ -52,7 +51,7 @@ class Sparse4DHead(BaseModule):
         init_cfg: Optional[Dict] = None,
         **kwargs,
     ):
-        super(Sparse4DHead, self).__init__(init_cfg)
+        super(SCATrHead, self).__init__(init_cfg)
         self.num_decoder = num_decoder
         self.num_single_frame_decoder = num_single_frame_decoder
         self.cls_threshold_to_reg = cls_threshold_to_reg

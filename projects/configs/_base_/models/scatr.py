@@ -21,7 +21,7 @@ dup_pq_groups = True
 voxel_size = [0.075, 0.075, 0.2]
 
 model = dict(
-    type="Sparse4D",
+    type="SCATr",
     use_deformable_func=use_deformable_func,
     freeze_pts=True,
     freeze_fusion=False,
@@ -79,12 +79,12 @@ model = dict(
         extra_feat=init_pq_with_heatmap,
     ),
     pts_bbox_head=dict(
-        type="Sparse4DHead",
+        type="SCATrHead",
         cls_threshold_to_reg=0.05,
         decouple_attn=decouple_attn,
         # focalformer3d_params
         modality="lidar",
-        # other sparse4D params
+        # other params
         instance_bank=dict(
             type="InstanceBank",
             num_anchor=300,

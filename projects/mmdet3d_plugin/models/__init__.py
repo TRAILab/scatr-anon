@@ -3,13 +3,13 @@ from .detection3d import (SparseBox3DDecoder, SparseBox3DEncoder,
                           SparseBox3DKeyPointsGenerator,
                           SparseBox3DRefinementModule, SparseBox3DTarget)
 from .instance_bank import InstanceBank
-from .sparse4d import Sparse4D
-from .sparse4d_head import Sparse4DHead
+from .SCATr import SCATr
+from .SCATrHead import SCATrHead
 from .necks import FocalEncoder
 
 __all__ = [
-    "Sparse4D",
-    "Sparse4DHead",
+    "SCATr",
+    "SCATrHead",
     "DeformableFeatureAggregation",
     "DenseDepthNet",
     "AsymmetricFFN",

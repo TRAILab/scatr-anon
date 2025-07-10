@@ -1,15 +1,15 @@
 WORK_DIR=${PWD}
-PROJECT=sparse4d-lidar
-DOCKER_IMAGE=bcheong/${PROJECT}:sam
+PROJECT=scatr
+DOCKER_IMAGE=${PROJECT}:sam
 DOCKER_FILE=Docker/Dockerfile
-DATA_ROOT_LOCAL_MINI=/media/brian/Data/nuscenes
-DATA_ROOT_LOCAL=/media/brian/Data/nuscenes
-WORK_DIR_LOCAL=/media/brian/Data/job_artifacts/Sparse4D-Lidar/work_dirs
-CKPTS_ROOT_LOCAL=/media/brian/Data/ckpts/sparse4d
+DATA_ROOT_LOCAL_MINI=/media/Data/nuscenes
+DATA_ROOT_LOCAL=/media/Data/nuscenes
+WORK_DIR_LOCAL=/media/Data/job_artifacts/scatr/work_dirs
+CKPTS_ROOT_LOCAL=/media/Data/ckpts/scatr
 
 DATA_ROOT_APOLLO=/scratch/hpc_nas/datasets/nuscenes/v1.0-trainval
 DATA_ROOT_APOLLO_MINI=/scratch/hpc_nas/datasets/nuscenes/v1.0-mini
-OUTPUT_APOLLO=/home/bcheong/job_artifacts/sparse4d-lidar/
+OUTPUT_APOLLO=/home/job_artifacts/scatr/
 
 DOCKER_OPTS = \
 	-it \

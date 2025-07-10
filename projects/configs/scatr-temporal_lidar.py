@@ -1,7 +1,7 @@
 _base_ = [
     './_base_/default_runtime.py',
     './_base_/datasets/nus-3d-track-lidar.py',
-    './_base_/models/sparse4dv3_temporal_SECOND.py',]
+    './_base_/models/scatr.py',]
 
 # ================ base config ===================
 plugin = True
@@ -21,10 +21,10 @@ log_processor = dict(by_epoch=False)
 
 short_name = "wacv_v2-narval-4g-3group_no_feat_pool"
 init_pq_with_heatmap = False
-work_dir = f"work_dirs/sparse4dv3-temporal_lidar_1x{num_gpus}_bs{batch_size}-{num_epochs}e_{short_name}"
+work_dir = f"work_dirs/scatr-temporal_lidar_1x{num_gpus}_bs{batch_size}-{num_epochs}e_{short_name}"
 
 load_from = 'ckpts/focalformer3d_converted/DeformFormer3D_L_iterimg_ep20_mAP655_NDS707.pth'
-# load_from = 'work_dirs/sparse4dv3-temporal_lidar_1x8_bs6-20e_lidar-8g-300q-baseline-900q-nopool-cyclic/epoch_19.pth'
+# load_from = 'work_dirs/scatr-temporal_lidar_1x8_bs6-20e_lidar-8g-300q-baseline-900q-nopool-cyclic/epoch_19.pth'
 # resume = True
 
 class_names = [
@@ -127,7 +127,6 @@ test_evaluator = dict(
 lr = 1.0e-5*total_batch_size  # 6e-4 for 8 gpus, bs=6
 optim_wrapper = dict(
     type="OptimWrapper",
-    # type="AmpOptimWrapper", # TODO does not work with Sparse4D upgrade yet
     # loss_scale=1.0,
     optimizer=dict(type="AdamW", lr=lr, weight_decay=0.001),
     clip_grad=dict(max_norm=25, norm_type=2, error_if_nonfinite=True),
